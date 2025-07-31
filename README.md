@@ -213,7 +213,6 @@ Best community assignments:
 T.naive_communities
 T.filtered_communities
 ```
-```
 
 
 ## Documentation
