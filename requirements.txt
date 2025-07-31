@@ -1,0 +1,13 @@
+setuptools>=61.2.0
+wheel
+numpy
+scipy
+pandas
+matplotlib
+tqdm
+joblib
+numba
+statsmodels
+fast-poibin
+
+
