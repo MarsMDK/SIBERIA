@@ -1,6 +1,4 @@
-![PyPI](https://img.shields.io/badge/pypi-v0.1.0-blue)  
-[![License:GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)  
-![Python Version](https://img.shields.io/badge/Python-3.9%20%7C%203.10-blue)  
+![PyPI](https://img.shields.io/badge/pypi-v0.1.0-blue) [![License:GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) ![Python Version](https://img.shields.io/badge/Python-3.9%20%7C%203.10-blue)  
 
 # Siberia: SIgned BEnchmarks foR tIme series Analysis
 
