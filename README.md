@@ -2,11 +2,11 @@
 
 # SIBERIA: SIgned BEnchmarks foR tIme series Analysis
 
-Siberia provides **maximum-entropy null models and validation methods for signed networks derived from time series**.  
+SIBERIA provides **maximum-entropy null models and validation methods for signed networks derived from time series**.  
 It enables the construction, filtering, and community detection of signed adjacency matrices based on validated co-fluctuations.  
 The library implements advanced null models (`bSRGM`, `bSCM`) to rigorously distinguish meaningful patterns from noise, supporting reproducible and interpretable time-series network analysis.
 
-Siberia includes methods to:
+SIBERIA includes methods to:
 
 - Compute binary **signature matrices** for co-fluctuations.  
 - Fit maximum-entropy **null models** (`bSRGM`, `bSCM`).  
@@ -52,7 +52,7 @@ pip install siberia --upgrade
 
 ## Dependencies
 
-Siberia requires the following libraries:
+SIBERIA requires the following libraries:
 
 - **numpy** for numerical operations
 - **scipy** for optimization and statistical functions
@@ -182,7 +182,7 @@ T.plot_graph(export_path="results/adjacency", show=True)
 
 ### Community Detection
 
-Siberia includes community detection routines based on:
+SIBERIA includes community detection routines based on:
 
 - **BIC minimization**
 - **Frustration minimization**
