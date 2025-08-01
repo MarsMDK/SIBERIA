@@ -60,7 +60,7 @@ SIBERIA requires the following libraries:
 - **fast-poibin** for Poisson-Binomial distributions
 - **joblib** for parallel computation
 - **statsmodels** for multiple testing corrections
-- **matplotlib** for visualization
+- **matplotlib** and **seaborn** for visualization
 - **tqdm** for progress bars
 - **numba** (optional, but recommended) for accelerating heavy computations
 
