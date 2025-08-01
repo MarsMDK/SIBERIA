@@ -36,8 +36,6 @@ Siberia includes methods to:
 ---
 
 
-
-```markdown
 ## Installation
 
 Siberia can be installed via [pip](https://pypi.org/project/Siberia/). Run:
