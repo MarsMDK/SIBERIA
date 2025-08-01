@@ -24,7 +24,8 @@ dependencies = [
   "joblib",
   "numba",
   "statsmodels",
-  "fast-poibin"
+  "fast-poibin",
+  "seaborn"
 ]
 requires-python = ">=3.9"
 
