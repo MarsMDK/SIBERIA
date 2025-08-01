@@ -223,7 +223,7 @@ It highlights community partitions by drawing boxes around groups of nodes assig
 
 ```python
 T.plot_communities(graph_type="filtered", export_path="results/communities", show=True)
-
+```
 
 
 ## Documentation
