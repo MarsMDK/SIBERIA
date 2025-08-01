@@ -62,7 +62,7 @@ SIBERIA requires the following libraries:
 - **statsmodels** for multiple testing corrections
 - **matplotlib** and **seaborn** for visualization
 - **tqdm** for progress bars
-- **numba** (optional, but recommended) for accelerating heavy computations
+- **numba** for accelerating heavy computations
 
 Install them via:
 
