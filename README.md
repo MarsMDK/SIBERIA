@@ -214,6 +214,17 @@ T.naive_communities
 T.filtered_communities
 ```
 
+### Plotting Communities
+
+The `plot_communities` function provides a visualization of adjacency matrices reordered by detected communities.  
+It highlights community partitions by drawing boxes around groups of nodes assigned to the same community.  
+
+#### Usage
+
+```python
+T.plot_communities(graph_type="filtered", export_path="results/communities", show=True)
+
+
 
 ## Documentation
 You can find the complete documentation of the MaxEntSeries library in [documentation](https://maxentseries.readthedocs.io/en/latest/index.html)
