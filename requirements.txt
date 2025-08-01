@@ -9,5 +9,6 @@ joblib
 numba
 statsmodels
 fast-poibin
+seaborn
 
 
