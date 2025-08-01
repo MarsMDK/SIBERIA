@@ -38,16 +38,16 @@ Siberia includes methods to:
 
 ## Installation
 
-Siberia can be installed via [pip](https://pypi.org/project/Siberia/). Run:
+siberia can be installed via [pip](https://pypi.org/project/siberia/). Run:
 
 ```bash
-pip install Siberia
+pip install siberia
 ```
 
 To upgrade to the latest version:
 
 ```bash
-pip install Siberia --upgrade
+pip install siberia --upgrade
 ```
 
 ## Dependencies
