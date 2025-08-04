@@ -1,4 +1,5 @@
-![PyPI](https://img.shields.io/badge/pypi-v0.1.0-blue) [![License:GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) ![Python Version](https://img.shields.io/badge/Python-3.9%20%7C%203.10-blue) [![Paper](https://img.shields.io/badge/arXiv-2508.00542-b31b1b.svg)](https://arxiv.org/abs/2508.00542)
+![PyPI](https://img.shields.io/badge/pypi-v0.1.0-blue) [![License:GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) ![Python Version](https://img.shields.io/badge/Python-3.10.12-blue)
+ [![Paper](https://img.shields.io/badge/arXiv-2508.00542-b31b1b.svg)](https://arxiv.org/abs/2508.00542)
 
 
 # SIBERIA: SIgned BEnchmarks foR tIme series Analysis
