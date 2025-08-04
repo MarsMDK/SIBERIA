@@ -1,11 +1,11 @@
-siberia: SIgned BEnchmarks foR tIme series Analysis
+SIBERIA: SIgned BEnchmarks foR tIme series Analysis
 ===================================================
 
-siberia is a Python3 package for rigorous **signed time-series network analysis**.  
+SIBERIA is a Python3 package for rigorous **signed time-series network analysis**.  
 It provides **maximum-entropy null models** and validation methods to identify 
 statistically significant patterns of co-fluctuations in time series data.
 
-Siberia provides solvers for the binary models bSRGM and bSCM.  
+SIBERIA provides solvers for the binary models bSRGM and bSCM.  
 These models enable researchers to distinguish meaningful signals from noise, 
 build signed adjacency matrices, and explore the structure of time-series-derived networks.
 
@@ -21,8 +21,21 @@ Main features include:
 
 For more information about Maximum Entropy methods, visit `Maximum Entropy Hub <https://meh.imtlucca.it>`_.
 
-When using the module for your scientific research, please consider citing relevant works 
-from the documentation.
+Citation
+====================================
+
+If you use SIBERIA in your research, please cite the following paper:
+
+::
+    @misc{divece2025assessingimbalancesignedbrain,
+          title={Assessing (im)balance in signed brain networks}, 
+          author={Marzio Di Vece and Emanuele Agrimi and Samuele Tatullo and Tommaso Gili and Miguel Ibáñez-Berganza and Tiziano Squartini},
+          year={2025},
+          eprint={2508.00542},
+          archivePrefix={arXiv},
+          primaryClass={physics.soc-ph},
+          url={https://arxiv.org/abs/2508.00542}, 
+    }
 
 Installation
 ====================================
@@ -179,3 +192,4 @@ Guide
    Siberia
    license
    contacts
+
