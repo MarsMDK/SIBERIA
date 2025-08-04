@@ -6,6 +6,8 @@ SIBERIA provides **maximum-entropy null models and validation methods for signed
 It enables the construction, filtering, and community detection of signed adjacency matrices based on validated co-fluctuations.  
 The library implements advanced null models (`bSRGM`, `bSCM`) to rigorously distinguish meaningful patterns from noise, supporting reproducible and interpretable time-series network analysis.
 
+
+
 SIBERIA includes methods to:
 
 - Compute binary **signature matrices** for co-fluctuations.  
@@ -17,6 +19,20 @@ SIBERIA includes methods to:
 - Visualize results via heatmaps and network adjacency plots.  
 
 ---
+## 📌 Citation
+
+If you use **SIBERIA** in your research, please cite the following paper:
+
+```bibtex
+@misc{divece2025assessingimbalancesignedbrain,
+      title={Assessing (im)balance in signed brain networks}, 
+      author={Marzio Di Vece and Emanuele Agrimi and Samuele Tatullo and Tommaso Gili and Miguel Ibáñez-Berganza and Tiziano Squartini},
+      year={2025},
+      eprint={2508.00542},
+      archivePrefix={arXiv},
+      primaryClass={physics.soc-ph},
+      url={https://arxiv.org/abs/2508.00542}, 
+}
 
 ## Contents
 - [Installation](#installation)
