@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "siberia"
 version = "0.0.1"
-description = "Siberia (SIgned BEnchmarks foR tIme series Analysis) provides maximum-entropy null models and validation methods for signed networks derived from time series."
+description = "SIBERIA (SIgned BEnchmarks foR tIme series Analysis) provides maximum-entropy null models and validation methods for signed networks derived from time series."
 readme = "README.md"
 license = {file = "GNU General Public License v3"}
 authors = [{ name = "Marzio Di Vece", email = "marzio.divece@sns.it" },{ name = "Emanuele Agrimi", email = "emanuele.agrimi@imtlucca.it"},{ name = "Samuele Tatullo", email = "samuele.tatullo@imtlucca.it"}]
