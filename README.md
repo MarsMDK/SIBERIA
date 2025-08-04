@@ -33,6 +33,8 @@ If you use **SIBERIA** in your research, please cite the following paper:
       primaryClass={physics.soc-ph},
       url={https://arxiv.org/abs/2508.00542}, 
 }
+```
+
 
 ## Contents
 - [Installation](#installation)
