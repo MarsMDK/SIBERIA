@@ -245,8 +245,7 @@ T.plot_communities(graph_type="filtered", export_path="results/communities", sho
 
 
 ## Documentation
-You can find the complete documentation of the MaxEntSeries library in [documentation](https://maxentseries.readthedocs.io/en/latest/index.html)
-
+You can find the complete documentation of the MaxEntSeries library in [documentation](https://siberia.readthedocs.io/en/latest/)
 ## Credits
 
 *Author*:
