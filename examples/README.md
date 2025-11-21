@@ -14,8 +14,8 @@ pip install siberia
 
 Examples will be added here to demonstrate:
 - Computing signatures from time series data
-- Fitting null models (bSRGM, bSCM)
-- Validating signatures with FDR correction
+- Fitting null models (binary Signed Random Graph Model - bSRGM, binary Signed Configuration Model - bSCM)
+- Validating signatures with False Discovery Rate (FDR) correction
 - Building and filtering signed graphs
 - Community detection
 - Visualization of results
