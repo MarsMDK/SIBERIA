@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from tqdm import tqdm
 import seaborn as sns
+from scipy.stats import ks_2samp
 
 
 """
@@ -197,9 +198,14 @@ class TSeries:
         numba.set_num_threads(self.n_jobs)
 
         #Implemented models
-        self.implemented_models = ['bSRGM','bSCM']
+        self.implemented_models = ['naive','bSRGM','bSCM']
         
-
+        # Check if data is standardized on rows (mean ~0, std ~1), if not, standardize
+        row_means = np.mean(data, axis=1)
+        row_stds = np.std(data, axis=1)
+        if not (np.allclose(row_means, 0, atol=1e-6) and np.allclose(row_stds, 1, atol=1e-6)):
+            data = (data - row_means[:, None]) / (row_stds[:, None] + 1e-12)
+        # print("Data standardized on rows.")
 
         # Inizialization of data and computation of marginals
         self.N = data.shape[0]
@@ -210,7 +216,6 @@ class TSeries:
         self.binary_tseries = np.sign(data)
 
         
-
         #Marginals for positive weights
         self.binary_tseries_positive = np.where(self.binary_tseries > 0, self.binary_tseries, 0)
         self.binary_tseries_negative = np.abs(np.where(self.binary_tseries < 0, self.binary_tseries, 0))
@@ -331,7 +336,8 @@ class TSeries:
             raise ValueError('model must be initialized')
         elif model not in self.implemented_models:
             raise ValueError('model is not implemented! Inspect "self.implemented_models"')
-
+        elif model == 'naive':
+            pass
         ### Inizialization of arguments for each model and of x0 if not initialized in input.
         if self.model == 'bSRGM': # Binary Bipartite-Signed Random Graph Model (for Time Series)
             self.args = (self.a_plus,self.a_minus, (self.N,self.T))
@@ -339,8 +345,6 @@ class TSeries:
         elif self.model == 'bSCM': # Binary Bipartite-Signed Configuration Model (for Time Series)
             self.args = (self.ai_plus,self.kt_plus,self.ai_minus,self.kt_minus)
             self.x0 = np.random.random(2*self.N + 2*self.T)
-        else:
-            raise ValueError('Model not implemented!')
         
         if self.model == 'bSRGM':
 
@@ -616,6 +620,9 @@ class TSeries:
             rel_error = - relative_error_bscm_model(self.params,*self.args)
             self.norm_rel_error = np.linalg.norm(rel_error,ord=np.inf)
             self.aic = 2*len(self.params) - 2*self.ll
+            if verbose > 0:
+                print('Fitting Completed with infinite norm:',self.norm, 'and infinite relative norm:',self.norm_rel_error)
+
 
         
         
@@ -687,10 +694,341 @@ class TSeries:
             self.pit_plus,self.pit_minus = bscm_model_proba_events(self.params,(self.N,self.T))
 
             return self.pit_plus,self.pit_minus
-
+        elif self.model == "naive":pass
             
 
-    def validate_signature(self, fdr_correction_flag = True, alpha = 0.05):
+    def check_distribution_signature(self, n_ensemble = 1000, ks_score=True, alpha = 0.05, ks_method = 'auto'):
+        """
+        Validate the signature of the model using either ensemble or analytical methods.
+        Parameters:
+        -----------
+        fdr_correction_flag : bool, optional
+            Flag to indicate whether to apply False Discovery Rate (FDR) correction. Default is True.
+        n_ensemble : int, optional
+            Number of ensembles to generate for the validation. Default is 1000.
+        alpha : float, optional
+            Significance level for statistical tests. Default is 0.05.
+        analytical : bool, optional
+    
+            Flag to indicate whether to use analytical methods for validation. Default is True.
+        Raises:
+        -------
+        ValueError
+            If the predicted probabilities and conditional weights are not computed before validation.
+            If the model specified is not valid.
+        Notes:
+        ------
+        This function validates the signature of the model by computing p-values and applying FDR correction.
+        Depending on the model type and the analytical flag, it uses different methods for validation:
+        - For ensemble-based validation, it computes ensemble signatures and elaborates statistics.
+        - For analytical validation, it computes p-values using specific analytical models for different types of models.
+        """
+    
+        if self.pit_plus is None:
+            raise ValueError("Predict probabilities and conditional weights first!")
+        
+        self.n_ensemble = n_ensemble
+
+        @jit(nopython=True) 
+        def pairwise_motif(data1, data2):
+            """
+            Compute the cofluctuation dynamic matrix for two time series datasets.
+            This function calculates the cofluctuation dynamic matrix, which is an NxN matrix for each time interval. 
+            The matrix element C_ij is defined as:
+            - 1 if series 'i' and series 'j' fluctuate with the same sign,
+            - -1 if they fluctuate with opposite signs,
+            - 0 otherwise.
+            Parameters:
+            data1 (numpy.ndarray): A 2D array of shape (N, T) representing the first time series dataset.
+            data2 (numpy.ndarray): A 2D array of shape (N, T) representing the second time series dataset.
+            Returns:
+            numpy.ndarray: An NxN matrix representing the cofluctuation dynamic matrix.
+            """
+            # Use matrix multiplication for efficient computation
+            motif = np.dot(data1, data2.T)
+            return motif
+        
+        @jit(nopython=True)
+        def sample_single_realization_binary(pit_plus,pit_minus):
+            """
+            Generates a single realization of binary data based on the given probabilities.
+            Parameters:
+            pit_plus (numpy.ndarray): A 2D array of shape (N, T) containing the probabilities of the positive outcome (1) for each element.
+            pit_minus (numpy.ndarray): A 2D array of shape (N, T) containing the probabilities of the negative outcome (-1) for each element.
+            Returns:
+            numpy.ndarray: A 2D array of shape (N, T) containing the generated binary data, where each element is either 1 or -1 based on the given probabilities.
+            """
+
+            N = pit_plus.shape[0]
+            T = pit_plus.shape[1]
+
+            realization_data = np.zeros((N,T))
+            
+            for i in range(N):
+                for t in range(T):
+                    p_plus = pit_plus[i,t]
+                    
+                    ran = np.random.rand()
+                    if ran < p_plus:
+                        realization_data[i,t] = 1
+                    else:
+                        realization_data[i,t] = -1
+            return realization_data
+
+        @jit(nopython=True,parallel=True)
+        def ensemble_signature_computation_binary(pit_plus,pit_minus,n_ensemble):
+            """Compute the ensemble statistics for the co-fluctuation matrices and correlation matrices."""
+
+            N = pit_plus.shape[0]
+            T = pit_plus.shape[1]
+            
+            ensemble_signature = np.empty((n_ensemble,N,N))
+
+            
+            for n_ens in prange(n_ensemble):
+                realization_data = sample_single_realization_binary(pit_plus,pit_minus)
+                positive_realization = np.where(realization_data > 0, realization_data, 0)
+                negative_realization = np.abs(np.where(realization_data < 0, realization_data, 0))
+                motif_plus_plus = pairwise_motif(positive_realization,positive_realization)
+                motif_plus_minus = pairwise_motif(positive_realization,negative_realization)
+                motif_minus_plus = pairwise_motif(negative_realization,positive_realization)
+                motif_minus_minus = pairwise_motif(negative_realization,negative_realization)
+                ensemble_signature[n_ens,:,:] = motif_plus_plus + motif_minus_minus - motif_plus_minus - motif_minus_plus
+                
+                
+            return ensemble_signature        
+                                
+        if self.model == 'bSRGM':
+            @staticmethod       
+            @jit(nopython=True,parallel=True)
+            def sample_analytical_bsr_model(pit_plus,pit_minus,n_ensemble):
+                """Compute the p-values for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
+                N = pit_plus.shape[0]
+                T = pit_plus.shape[1]
+
+                q_plus = (pit_plus**2 + pit_minus**2)[0]
+                
+                signature_ens = np.empty((N,N,n_ensemble))
+                for i in prange(N):
+                    for j in range(N):
+                        if j != i:
+                            c_ens = np.random.binomial(T,q_plus[0],n_ensemble)
+                            signature_ens[i,j,:] = 2*c_ens - T
+                            
+                return signature_ens
+            
+            @staticmethod       
+            def compute_c_ens(i, j, T, ensemble_signature, q_plus):
+                """Helper function to compute c_ens for a specific (i, j)."""
+                ensemble_cij = (T + ensemble_signature[i, j, :]) / 2
+                return binom.pmf(ensemble_cij.astype(int), T, q_plus[0])
+
+            @staticmethod       
+            def sample_analytical_bsr_model_2(pit_plus, pit_minus, ensemble_signature, n_jobs):
+                """Compute the p-values for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
+                N = pit_plus.shape[0]
+                T = pit_plus.shape[1]
+
+                q_plus = (pit_plus**2 + pit_minus**2)[0]
+                signature_ens = ensemble_signature.copy()
+
+                # Parallel computation for (i, j) pairs where i != j
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_c_ens)(i, j, T, ensemble_signature, q_plus)
+                    for i in range(N) for j in range(N) if i != j
+                )
+
+                # Update signature_ens with the computed results
+                index = 0
+                for i in range(N):
+                    for j in range(N):
+                        if i != j:
+                            signature_ens[i, j, :] = results[index]
+                            index += 1
+
+                return signature_ens
+            
+            ensemble_signature = ensemble_signature_computation_binary(self.pit_plus,self.pit_minus,self.n_ensemble).transpose(1,2,0)
+            analytical_signature = sample_analytical_bsr_model(self.pit_plus,self.pit_minus,self.n_ensemble)
+            analytical_signature_dist = sample_analytical_bsr_model_2(self.pit_plus,self.pit_minus,ensemble_signature, self.n_jobs)
+            
+            
+        elif self.model == 'bSCM':
+
+            
+            @staticmethod
+            def compute_pair_signature(i, j, pit_plus, pit_minus, n_ensemble, T):
+                """
+                Compute the ensemble signature for a single node pair (i, j).
+
+                Parameters:
+                    i (int): Row index.
+                    j (int): Column index.
+                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
+                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
+                    n_ensemble (int): Number of ensemble samples to generate.
+                    T (int): Number of trials (time steps).
+
+                Returns:
+                    tuple: (i, j, ensemble_signature), where ensemble_signature is an array of size n_ensemble.
+                """
+                if i == j:
+                    # Self-loop case: Set signature to T
+                    return i, j, np.full(n_ensemble, T)
+
+                # Calculate Poisson Binomial probabilities
+                probabilities = pit_plus[i, :] * pit_plus[j, :] + pit_minus[i, :] * pit_minus[j, :]
+
+                # Initialize the Poisson Binomial distribution
+                pb = PoiBin(probabilities)
+
+                # Precompute the CDF for all possible outcomes
+                cdf_values = pb.cdf
+
+                # Generate uniform random numbers
+                uniform_samples = np.random.uniform(0, 1, n_ensemble)
+
+                # Map uniform samples to Poisson Binomial outcomes
+                poibin_samples = np.searchsorted(cdf_values, uniform_samples)
+
+                # Compute ensemble signature
+                ensemble_signature = 2 * poibin_samples - T
+
+                return i, j, ensemble_signature
+
+
+            @staticmethod
+            def sample_analytical_bscm_model_poibin(pit_plus, pit_minus, n_ensemble, n_jobs=-1):
+                """
+                Compute ensemble signatures for the Binary Bipartite-Signed Random Graph Model with parallelization.
+
+                Parameters:
+                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
+                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
+                    n_ensemble (int): Number of ensemble samples to generate.
+                    n_jobs (int): Number of parallel jobs (-1 to use all available cores).
+
+                Returns:
+                    numpy.ndarray: N x N x n_ensemble array of ensemble signatures.
+                """
+                N, T = pit_plus.shape
+                ensemble_signature = np.empty((N, N, n_ensemble))
+
+                # Outer loop over i with progress tracking
+                for i in range(N):
+                    # Parallel processing of inner loop over j
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_pair_signature)(i, j, pit_plus, pit_minus, n_ensemble, T)
+                        for j in range(N)
+                    )
+                    for _, j, signature in results:
+                        ensemble_signature[i, j, :] = signature
+
+                return ensemble_signature
+            
+            @staticmethod
+            def compute_pair_iteration(i, j, pit_plus, pit_minus, n_ensemble, T):
+                """
+                Compute the ensemble PMF for a single node pair (i, j).
+
+                Parameters:
+                    i (int): Row index.
+                    j (int): Column index.
+                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
+                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
+                    n_ensemble (int): Number of ensemble samples to generate.
+                    T (int): Number of trials (time steps).
+
+                Returns:
+                    tuple: (i, j, pmf_values), where pmf_values is the PMF array.
+                """
+                if i == j:
+                    # Self-loop case: Set PMF to T
+                    return i, j, np.full(T + 1, T)
+
+                # Calculate Poisson Binomial probabilities
+                probabilities = pit_plus[i, :] * pit_plus[j, :] + pit_minus[i, :] * pit_minus[j, :]
+
+                # Initialize the Poisson Binomial distribution
+                pb = PoiBin(probabilities)
+
+                # Compute the PMF
+                pmf_values = pb.pmf
+
+                return i, j, pmf_values
+
+
+            @staticmethod
+            def sample_analytical_bscm_model_poibin_dist(pit_plus, pit_minus, ensemble_signature, n_jobs=-1):
+                """
+                Compute ensemble PMFs for the Binary Bipartite-Signed Random Graph Model with parallelization.
+
+                Parameters:
+                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
+                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
+                    ensemble_signature (numpy.ndarray): Precomputed ensemble signature array.
+                    n_jobs (int): Number of parallel jobs (-1 to use all available cores).
+
+                Returns:
+                    numpy.ndarray: N x N x (T+1) array of PMFs.
+                """
+                N, T = pit_plus.shape
+                dist_signature = np.empty((N, N, T + 1), dtype=object)
+
+                # Outer loop over i with progress tracking
+                for i in range(N):
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_pair_iteration)(i, j, pit_plus, pit_minus, ensemble_signature.shape[-1], T)
+                        for j in range(N)
+                    )
+                    for _, j, pmf_values in results:
+                        dist_signature[i, j, :] = pmf_values
+
+                return dist_signature
+
+
+
+            
+            ensemble_signature = ensemble_signature_computation_binary(self.pit_plus,self.pit_minus,self.n_ensemble).transpose(1,2,0)
+            analytical_signature = np.array(sample_analytical_bscm_model_poibin(self.pit_plus,self.pit_minus,self.n_ensemble))
+            analytical_signature_dist = np.array(sample_analytical_bscm_model_poibin_dist(self.pit_plus,self.pit_minus,ensemble_signature,self.n_jobs))
+        
+        self.ensemble_signature = ensemble_signature
+        self.analytical_signature = analytical_signature
+        self.analytical_signature_dist = analytical_signature_dist
+
+        if ks_score==True:
+            ### Statistical KS_scores
+            @staticmethod
+            def compute_ks_score(ensemble_signature, analytical_signature, ks_method='auto'):
+                """
+                Compute the Kolmogorov-Smirnov (KS) scores between ensemble and analytical signatures.
+                Parameters:
+                    ensemble_signature (numpy.ndarray): N x N x n_ensemble array of ensemble signatures.
+                    analytical_signature (numpy.ndarray): N x N x n_analytical array of analytical signatures.
+                    ks_method (str): Method for KS test ('auto', 'exact', 'asymp').
+                Returns:
+                    numpy.ndarray: N x N array of KS scores.
+                """
+                N = ensemble_signature.shape[0]
+                ks_score = 0
+                num_tot = 0
+                for i in range(N):
+                    for j in range(i,N):
+                        if i != j:
+                            num_tot += 1
+                            _, p_KS = ks_2samp(ensemble_signature[i, j, :], analytical_signature[i, j, :], alternative='two-sided', mode=ks_method)
+                            if p_KS >= 0.05:
+                                ks_score += 1
+                
+                ks_score_normalized = ks_score / num_tot
+                return ks_score_normalized
+
+            self.ks_score = compute_ks_score(self.ensemble_signature, self.analytical_signature)
+
+            return self.ks_score
+
+    def build_graph(self, fdr_correction_flag = True, alpha = 0.05):
         """
         This function validates the signature of the model by computing p-values and applying 
         False Discovery Rate (FDR) correction. Depending on the model type, it uses analytical 
@@ -723,7 +1061,10 @@ class TSeries:
         Depending on the model type, it uses analytical methods for validation:
         - It computes p-values using specific analytical models for different types of models.
         """
-    
+        if self.model == 'naive':
+            self.graph = np.sign(self.binary_signature)
+            return self.graph
+        
         if self.pit_plus is None:
             raise ValueError("Predict probabilities and conditional weights first!")
         
@@ -761,7 +1102,6 @@ class TSeries:
             return corrected_p_values
         self.alpha = alpha
         self.fdr_correction_flag = fdr_correction_flag
-        
         if self.model == 'bSRGM':
             def p_values_analytical_bsr_model(pit_plus,pit_minus,concordant_motifs):
                 """
@@ -788,48 +1128,47 @@ class TSeries:
                 T = pit_plus.shape[1]
 
                 q_plus = (pit_plus**2 + pit_minus**2)[0]
-                
+                cdfx_condition = np.zeros((N,N))
                 p_values = np.empty((N,N))
                 for i in range(N):
                     for j in range(N):
                         if i != j:
-                            cdfx = binom.cdf(concordant_motifs[i,j],T,q_plus[0])
+                            cdfx = binom.cdf(concordant_motifs[i,j],T,q_plus[0])                            
                             p_values[i,j] = 2.*min(cdfx,1.-cdfx)
-                            
+                            cdfx_condition[i,j] = 1 if cdfx > 0.5 else -1
+
                         else:
                             p_values[i,j] = 1.0
-                return p_values
+                return p_values, cdfx_condition
             
-
-            model_p_values = p_values_analytical_bsr_model(self.pit_plus,self.pit_minus,self.binary_concordant_motifs)
+            model_p_values, cdfx_condition = p_values_analytical_bsr_model(self.pit_plus,self.pit_minus,self.binary_concordant_motifs)
             self.p_values_corrected = fdr_correction(model_p_values,alpha=self.alpha)
-            
+            self.cdfx_condition = cdfx_condition
 
         elif self.model == 'bSCM':
             
             @staticmethod
             def p_values_analytical_bscm_model(pit_plus,pit_minus,concordant_motifs):
-                def p_values_analytical_bscm_model(pit_plus, pit_minus, concordant_motifs):
-                    """
-                    Compute the p-values for a given analytical bSCM (binary Signed Configuration Model) model.
-                    This function calculates the p-values for concordant motifs between pairs of nodes
-                    based on the provided PIT (Probability Integral Transform) matrices and concordant motifs matrix.
-                    Args:
-                        pit_plus (numpy.ndarray): A 2D array of shape (N, T) representing the PIT values for positive motifs.
-                                                  N is the number of nodes, and T is the number of time steps.
-                        pit_minus (numpy.ndarray): A 2D array of shape (N, T) representing the PIT values for negative motifs.
-                                                   N is the number of nodes, and T is the number of time steps.
-                        concordant_motifs (numpy.ndarray): A 2D array of shape (N, N) representing the concordant motifs
-                                                           between pairs of nodes.
-                    Returns:
-                        numpy.ndarray: A 2D array of shape (N, N) containing the computed p-values for each pair of nodes.
-                                       The diagonal elements are set to 1.0 as self-comparisons are not meaningful.
-                    """
-                
+                """
+                Compute the p-values for a given analytical bSCM (binary Signed Configuration Model) model.
+                This function calculates the p-values for concordant motifs between pairs of nodes
+                based on the provided PIT (Probability Integral Transform) matrices and concordant motifs matrix.
+                Args:
+                    pit_plus (numpy.ndarray): A 2D array of shape (N, T) representing the PIT values for positive motifs.
+                                                N is the number of nodes, and T is the number of time steps.
+                    pit_minus (numpy.ndarray): A 2D array of shape (N, T) representing the PIT values for negative motifs.
+                                                N is the number of nodes, and T is the number of time steps.
+                    concordant_motifs (numpy.ndarray): A 2D array of shape (N, N) representing the concordant motifs
+                                                        between pairs of nodes.
+                Returns:
+                    numpy.ndarray: A 2D array of shape (N, N) containing the computed p-values for each pair of nodes.
+                                    The diagonal elements are set to 1.0 as self-comparisons are not meaningful.
+                """
+            
                 N = pit_plus.shape[0]
                 T = pit_plus.shape[1]
 
-                
+                cdfx_condition = np.zeros((N,N))
                 p_values = np.empty((N,N))
                 for i in range(N):
                     for j in range(N):
@@ -837,121 +1176,28 @@ class TSeries:
                             probabilities = pit_plus[i,:] * pit_plus[j,:] + pit_minus[i,:] * pit_minus[j,:]
                             pb = PoiBin(list(probabilities))
                             cdfx = pb.cdf[int(concordant_motifs[i,j])]
+                            if cdfx > 0.5:
+                                cdfx_condition[i,j] = 1
+                            else:
+                                cdfx_condition[i,j] = -1
                             p_values[i,j] = 2.*min(cdfx,1.-cdfx)
                             
                         else:
                             p_values[i,j] = 1.0
-                return p_values
+                return p_values, cdfx_condition
 
             
-            model_p_values = p_values_analytical_bscm_model(self.pit_plus,self.pit_minus,self.binary_concordant_motifs)
+            model_p_values, cdfx_condition = p_values_analytical_bscm_model(self.pit_plus,self.pit_minus,self.binary_concordant_motifs)
             self.p_values_corrected = fdr_correction(model_p_values,alpha=self.alpha)
-            
+            self.cdfx_condition = cdfx_condition
         else:
             raise ValueError('The model is not valid!')
 
-
-        @staticmethod
-        def filter_statistic(emp_stat,p_values, alpha):
-            """
-            Filters the empirical statistics based on p-values and a significance level.
-            Parameters:
-            emp_stat (array-like): The array of empirical statistics to be filtered.
-            p_values (array-like): The array of p-values corresponding to the empirical statistics.
-            alpha (float): The significance level threshold. Values in `p_values` less than `alpha` 
-                       will retain the corresponding value in `emp_stat`, otherwise replaced with 0.
-            Returns:
-            numpy.ndarray: An array where values from `emp_stat` are retained if the corresponding 
-                       `p_values` are less than `alpha`, otherwise replaced with 0.
-            """
-            
-            filtered_stat = np.where(p_values < alpha, emp_stat, 0)
-            return filtered_stat
-    
-        self.filtered_signature = filter_statistic(self.binary_signature, self.p_values_corrected, self.alpha)
         
-        return self.filtered_signature
-
-
-    def build_graph(self):
-        """
-        Constructs and returns two graph representations based on the signature matrices.
-        This method generates two graph representations:
-        1. A naive graph based on the binary signature matrix.
-        2. A filtered graph based on the filtered signature matrix.
-        Returns:
-            tuple: A tuple containing:
-                - naive_graph (numpy.ndarray): The graph representation derived from the binary signature matrix.
-                - filtered_graph (numpy.ndarray): The graph representation derived from the filtered signature matrix.
-        Raises:
-            ValueError: If the filtered signature matrix is not available (i.e., `self.filtered_signature` is None).
-        """
-
-        if self.filtered_signature is None:
-            raise ValueError("Filter the signature matrix first!")
+        self.graph = np.where(self.p_values_corrected < self.alpha, self.cdfx_condition, 0) # filtered graph without sign information
         
-        self.naive_graph = np.sign(self.binary_signature)
-        self.filtered_graph = np.sign(self.filtered_signature)
-        return self.naive_graph,self.filtered_graph
+        return self.graph
 
-
-
-    def plot_signature(self,export_path='',show=True):
-        """
-        Plots the binary and filtered signature matrices as heatmaps.
-        This method visualizes the binary signature matrix and the filtered 
-        signature matrix side by side using heatmaps. It also provides options 
-        to export the plot to a file and display it.
-        Parameters:
-        -----------
-        export_path : str, optional
-            The file path (excluding extension) where the plot will be saved 
-            as a PDF. If empty, the plot will not be saved. Default is ''.
-        show : bool, optional
-            If True, the plot will be displayed. Default is True.
-        Raises:
-        -------
-        ValueError
-            If `binary_signature` or `filtered_signature` is None, indicating 
-            that the signature has not been computed.
-        Notes:
-        ------
-        - The heatmaps use the 'coolwarm_r' colormap.
-        - The exported file will have '_signature.pdf' appended to the 
-          provided `export_path`.
-        Example:
-        --------
-        To save the plot to a file and display it:
-            obj.plot_signature(export_path='/path/to/save/plot', show=True)
-        To only save the plot without displaying it:
-            obj.plot_signature(export_path='/path/to/save/plot', show=False)
-        """
-        
-        
-        
-
-
-        if self.binary_signature is None or self.filtered_signature is None:
-            raise ValueError("Compute the signature first!")
-
-        def plot_heatmap(matrix, title, ax):
-            cax = ax.matshow(matrix, cmap='coolwarm_r')
-            plt.title(title)
-
-            plt.colorbar(cax, ax=ax)
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-
-        plot_heatmap(self.binary_signature, 'Empirical Signature Matrix', ax1)
-        plot_heatmap(self.filtered_signature, 'Filtered Signature Matrix', ax2)
-        
-        plt.tight_layout()
-        if export_path != '':
-            export_path_corr_matrix = export_path + '_signature.pdf'
-            plt.savefig(export_path_corr_matrix,dpi=300)
-        if show == True:
-            plt.show()
-        plt.close()
 
     def plot_graph(self, export_path='', show=True):
         """
@@ -977,7 +1223,7 @@ class TSeries:
           "_adjacency.pdf".
         """
         
-        if self.filtered_graph is None:
+        if self.graph is None:
             raise ValueError("Build the graph first!")
 
         # Define a discrete colormap
@@ -990,12 +1236,15 @@ class TSeries:
             # Plot heatmap using the discrete colormap
             cax = ax.matshow(matrix, cmap=cmap, norm=norm)
             ax.set_title(title)
-            plt.colorbar(cax, ax=ax, ticks=[-1, 0, 1])  # Add colorbar with discrete ticks
+            # Place colorbar horizontally below the figure
+            plt.colorbar(
+                cax, ax=ax, orientation='horizontal', ticks=[-1, 0, 1],
+                fraction=0.046, pad=0.15, label='Link Value'
+            )
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(5, 5))
 
-        plot_heatmap(self.naive_graph, 'Naive Adjacency Matrix', ax1)
-        plot_heatmap(self.filtered_graph, 'Filtered Adjacency Matrix', ax2)
+        plot_heatmap(self.graph, 'Projection Matrix', ax)
 
         plt.tight_layout()
         if export_path:
@@ -1006,196 +1255,97 @@ class TSeries:
         plt.close()
 
 
-    def community_detection(self,trials: int = 500,n_jobs: int = None,method: str = "bic",show: bool = False):
+    def community_detection(
+        self,
+        trials: int = 500,
+        n_jobs: int = 1,
+        method: str = "bic",
+        show: bool = False,
+        random_state: int = 42,
+        starter: str = "uniform"):
         """
-        Perform community detection on the naive and filtered graphs using a specified method.
-        This method applies a greedy minimization routine to detect communities in the graphs
-        associated with the object. It supports two optimization criteria: Bayesian Information
-        Criterion (BIC) and network frustration.
-        -----------
-        trials : int, optional
-            The number of trials to run for the community detection algorithm. Default is 500.
-        n_jobs : int, optional
-            The number of parallel jobs to use for running trials. If None, the value of `self.n_jobs` is used.
-        method : str, optional
-            The optimization criterion to use for community detection. Must be either "bic" (Bayesian Information Criterion)
-            or "frustration". Default is "bic".
-        show : bool, optional
-            If True, logs additional information about the progress of the trials. Default is False.
-        Raises:
-        -------
-        ValueError
-            If `self.naive_graph` or `self.filtered_graph` is None, indicating that `.build_graph()` must be called first.
-        ValueError
-            If the `method` parameter is not one of "bic" or "frustration".
-        --------
-        dict
-            A dictionary containing the community detection results for both the naive and filtered graphs:
-            - 'naive': A dictionary with the best community assignment, minimum loss, number of infinite losses, and runtime.
-            - 'filtered': A dictionary with the same structure as 'naive', but for the filtered graph.
-            - 'method': The optimization method used ("bic" or "frustration").
-        Notes:
-        ------
-        - The method uses a greedy algorithm to iteratively reassign nodes to communities to minimize the specified criterion.
-        - The results are stored in `self.naive_communities`, `self.filtered_communities`, and `self.comm_stats` for later use.
-        """
-        
+        Detect communities in the current graph via greedy minimization with multiple randomized restarts.
 
-        if self.naive_graph is None or self.filtered_graph is None:
+        This method partitions the nodes of ``self.graph`` into communities by greedily minimizing
+        an objective function. Two objectives are supported:
+
+        • ``"bic"``: Bayesian Information Criterion of a signed stochastic block model (separate
+            probabilities for positive and negative edges in each block);
+        • ``"frustration"``: signed network frustration, penalizing negative edges inside
+            communities and positive edges across communities.
+
+        For robustness to local minima, the algorithm performs several independent trials, each
+        starting from a different random community assignment. Trials are run in parallel and
+        the partition with the lowest objective value is returned.
+
+        Parameters
+        ----------
+        trials : int, optional
+            Number of independent random restarts (trials) of the greedy algorithm.
+            Each trial starts from a different initial community assignment.
+            Default is 500.
+        n_jobs : int or None, optional
+            Number of parallel jobs used to run the trials. If ``None``, uses ``self.n_jobs``.
+            Default is 1.
+        method : {"bic", "frustration"}, optional
+            Objective to minimize. ``"bic"`` uses the BIC of a signed SBM; ``"frustration"``
+            uses network frustration. Default is ``"bic"``.
+        show : bool, optional
+            If ``True``, passes a verbose flag to the underlying parallel execution
+            to log progress information. Default is ``False``.
+        random_state : int or None, optional
+            Seed for the global random number generator that produces per-trial seeds.
+            Use this for reproducible community assignments. Default is 42.
+        starter : str, optional
+            Strategy used to generate initial community labels for each trial.
+            If ``"uniform"``, each trial starts from a shuffled identity labeling
+            (one unique label per node). Any other value triggers a mixture strategy
+            that randomly chooses between shuffled identity and a random partition
+            into ``k`` communities (with 2 ≤ k ≤ min(10, N)). Default is ``"uniform"``.
+
+        Returns
+        -------
+        np.ndarray
+            One-dimensional array of length ``N`` with the community label of each node
+            (labels are relabeled to be contiguous integers starting at 0). The same
+            array is also stored in ``self.communities``.
+
+        Raises
+        ------
+        ValueError
+            If ``self.graph`` is ``None`` (i.e., ``.build_graph()`` must be called first),
+            or if ``method`` is not one of ``"bic"`` or ``"frustration"``.
+
+        Notes
+        -----
+        The underlying graph is represented by ``self.graph``, a signed adjacency matrix.
+        For the BIC objective, a signed stochastic block model with separate probabilities
+        for positive and negative edges in each community pair is fitted, and the BIC
+        is computed as a penalized negative log-likelihood. For the frustration objective,
+        the loss counts (with weights) negative edges inside communities and positive
+        edges between communities.
+
+        During optimization, if a community becomes empty after a node move, the labels
+        are renumbered so that community indices remain compact (0, 1, ..., K-1).
+        """
+
+        if self.graph is None:
             raise ValueError("You must call .build_graph() before running community detection.")
         
         if method not in ["bic", "frustration"]:
             raise ValueError('method must be either "bic" or "frustration".')
+        
+        if starter not in ["uniform", "mixture"]:
+            raise ValueError('starter must be either "uniform" or "mixture".')
 
         if n_jobs is None:
             n_jobs = self.n_jobs
 
         @staticmethod
         @jit(nopython=True)
-        def compute_edges_probabilities(adj, C, sign):
+        def _updateF(adj, C):
             """
-            Compute the probabilities of edges between communities in a graph.
-            
-            Parameters:
-            adj (numpy.ndarray): Adjacency matrix of the graph.
-            C (list or array): List where the index represents the node and the value represents the community.
-            sign (int): The sign of the edges to consider (e.g., 1 for positive edges, -1 for negative edges).
-            
-            Returns:
-            tuple: (probability_matrix, total_links, count_matrix) where:
-                probability_matrix: Matrix of edge probabilities between communities.
-                total_links: Matrix of total possible links between communities.
-                count_matrix: Matrix of actual edge counts between communities.
-            """
-            # Convert community assignment C to list of unique communities and its index vector.
-            unique_communities = list(set(C))
-            C_index = np.empty(len(C), dtype=np.int64)
-            for i in range(len(C)):
-                # Find index of C[i] in unique_communities
-                for j in range(len(unique_communities)):
-                    if C[i] == unique_communities[j]:
-                        C_index[i] = j
-                        break
-
-            N = adj.shape[0]
-            k = len(unique_communities)
-            
-            # Compute the counts for each community.
-            com_counts = np.zeros(k, dtype=np.int64)
-            for i in range(len(C_index)):
-                com_counts[C_index[i]] += 1
-            
-            # Precompute the total possible links between communities.
-            total_links = np.zeros((k, k), dtype=np.int64)
-            for i in range(k):
-                for j in range(k):
-                    if i == j:
-                        total_links[i, j] = com_counts[i] * (com_counts[i] - 1) // 2
-                    else:
-                        total_links[i, j] = com_counts[i] * com_counts[j]
-            
-            # Count the actual number of edges with the given sign.
-            count_matrix = np.zeros((k, k), dtype=np.int64)
-            for u in range(N):
-                for v in range(u + 1, N):
-                    if adj[u, v] == sign:
-                        c1, c2 = C_index[u], C_index[v]
-                        count_matrix[c1, c2] += 1
-                        if c1 != c2:
-                            count_matrix[c2, c1] += 1
-                            
-            # Compute the probability of edges between communities.
-            probability_matrix = np.zeros((k, k), dtype=np.float64)
-            for i in range(k):
-                for j in range(k):
-                    if total_links[i, j] > 0:
-                        probability_matrix[i, j] = count_matrix[i, j] / total_links[i, j]
-                    else:
-                        probability_matrix[i, j] = 0.0
-            
-            return probability_matrix, total_links, count_matrix
-
-        @staticmethod
-        def UpdateBIC(adj, C):
-            """
-            Calculate the Bayesian Information Criterion (BIC) for a given adjacency matrix and community assignment.
-            
-            Parameters:
-            adj (numpy.ndarray): The adjacency matrix representing the graph.
-            C (list or array): Community assignment; index represents the node and value is the community.
-            
-            Returns:
-            float: The BIC value.
-            """
-            # Create community index twice (keeping structure similar to the original code)
-            unique_communities = list(set(C))
-            C_index = np.array([unique_communities.index(c) for c in C])
-            unique_communities = list(set(C))
-            C_index = np.array([unique_communities.index(c) for c in C])
-            
-            # Compute community counts.
-            com_counts = np.zeros(len(unique_communities), dtype=np.int64)
-            for c in C_index:
-                com_counts[c] += 1
-
-            N = adj.shape[0]
-            k = len(unique_communities)
-            
-            # Compute edge probabilities for negative and positive edges.
-            edge_minus = compute_edges_probabilities(adj, C_index, -1)
-            edge_plus = compute_edges_probabilities(adj, C_index, 1)
-
-            P_minus = edge_minus[0]
-            P_plus = edge_plus[0]
-            L_minus = edge_minus[2]
-            L_plus = edge_plus[2]
-            
-            n = com_counts
-
-            def compute_log_likelihood(k, n, L_minus, L_plus, P_minus, P_plus):
-                epsilon = 1e-10  # Small value to avoid divide by zero
-                log_likelihood = 0.0
-                for c in range(k):
-                    nc = n[c]
-                    if nc > 1:
-                        Lmc = L_minus[c][c]
-                        Lpc = L_plus[c][c]
-                        Pmc = max(P_minus[c][c], epsilon)
-                        Ppc = max(P_plus[c][c], epsilon)
-                        one_minus = max(1 - Pmc - Ppc, epsilon)
-
-                        log_likelihood += (Lmc * np.log(Pmc) + Lpc * np.log(Ppc) +
-                                           ((nc * (nc - 1)) / 2 - Lmc - Lpc) * np.log(one_minus))
-
-                        for d in range(c + 1, k):
-                            Lmd = L_minus[c][d]
-                            Lpd = L_plus[c][d]
-                            Pmd = max(P_minus[c][d], epsilon)
-                            Ppd = max(P_plus[c][d], epsilon)
-                            one_minus_d = max(1 - Pmd - Ppd, epsilon)
-
-                            log_likelihood += (Lmd * np.log(Pmd) + Lpd * np.log(Ppd) +
-                                               (nc * n[d] - Lmd - Lpd) * np.log(one_minus_d))
-                return log_likelihood
-
-            log_likelihood = compute_log_likelihood(k, n, L_minus, L_plus, P_minus, P_plus)
-            BIC = k * (k + 1) * np.log(N * (N - 1) / 2) - 2 * log_likelihood
-            
-            return BIC
-
-        # ---------------------------- Frustration-related functions ----------------------------
-        @staticmethod
-        @jit(nopython=True)
-        def UpdateF(adj, C):
-            """
-            Calculate the frustration F (with weights) for the given community partition.
-            
-            For each pair of nodes:
-            - If an edge is negative (adj < 0) and the nodes are in the same community, add the absolute weight.
-            - If an edge is positive (adj > 0) and the nodes are in different communities, add the edge weight.
-            
-            Returns:
-            float: The frustration value, divided by 2 to avoid double counting.
+            Frustration: penalize negative edges within a community and positive edges across communities.
             """
             F = 0.0
             N = len(C)
@@ -1205,121 +1355,248 @@ class TSeries:
                         F += abs(adj[i, j])
                     elif adj[i, j] > 0 and C[i] != C[j]:
                         F += adj[i, j]
-            return F / 2.0  # To avoid double counting
+            return F / 2.0
 
-        # ------------------------ Greedy Minimization Routine ------------------------
+        
+        @staticmethod
+        @jit(nopython=True)
+        def _compute_edges_probabilities(adj, C_index, sign):
+            """
+            Returns (prob_matrix, total_links, count_matrix) for edges of a given sign.
+            """
+            N = adj.shape[0]
+            k = np.max(C_index) + 1
 
-        def greedy_min(K_up, C, adjmat, method="bic"):
+            # community counts
+            com_counts = np.zeros(k, dtype=np.int64)
+            for idx in C_index:
+                com_counts[idx] += 1
+
+            # total possible links between communities
+            total_links = np.zeros((k, k), dtype=np.int64)
+            for i in range(k):
+                for j in range(k):
+                    if i == j:
+                        total_links[i, j] = com_counts[i] * (com_counts[i] - 1) // 2
+                    else:
+                        total_links[i, j] = com_counts[i] * com_counts[j]
+
+            # count actual edges with given sign
+            count_matrix = np.zeros((k, k), dtype=np.int64)
+            for u in range(N):
+                for v in range(u + 1, N):
+                    if adj[u, v] == sign:
+                        c1 = C_index[u]
+                        c2 = C_index[v]
+                        count_matrix[c1, c2] += 1
+                        if c1 != c2:
+                            count_matrix[c2, c1] += 1
+
+            # probabilities
+            prob = np.zeros((k, k), dtype=np.float64)
+            for i in range(k):
+                for j in range(k):
+                    if total_links[i, j] > 0:
+                        prob[i, j] = count_matrix[i, j] / total_links[i, j]
+                    else:
+                        prob[i, j] = 0.0
+            return prob, total_links, count_matrix
+
+        # @staticmethod
+        # @jit(nopython=True)
+        @staticmethod
+        def _updateBIC(adj, C):
             """
-            Greedy algorithm that iteratively reassigns nodes to communities in order to 
-            minimize a given criterion. The criterion is chosen by the parameter 'method'.
-            
-            Parameters:
-            K_up (int): Initial maximum number of clusters.
-            C (numpy.ndarray): Initial community assignment (1D array).
-            adjmat (numpy.ndarray): Adjacency matrix of the graph.
-            method (str): "bic" to minimize Bayesian Information Criterion, or "frustration" 
-                            to minimize network frustration.
-            
-            Returns:
-            tuple: (C, final_value)
-                - C: The updated community assignment after optimization.
-                - final_value: The final BIC value (if method=="bic") or the final frustration value (if method=="frustration").
+            BIC for signed SBM-like model with separate P(+) and P(-) per (community, community).
             """
-            # Choose the appropriate update function.
-            if method.lower() == "bic":
-                update = UpdateBIC
-            elif method.lower() == "frustration":
-                update = UpdateF
+            # normalize labels to 0..k-1
+            unique = np.unique(C)
+            remap = {c: i for i, c in enumerate(unique)}
+            C_index = np.array([remap[c] for c in C], dtype=np.int64)
+
+            N = adj.shape[0]
+            k = len(unique)
+
+            P_minus, _, L_minus = _compute_edges_probabilities(adj, C_index, -1)
+            P_plus,  _, L_plus  = _compute_edges_probabilities(adj, C_index,  1)
+
+            # counts per community
+            n = np.zeros(k, dtype=np.int64)
+            for idx in C_index:
+                n[idx] += 1
+
+            def _loglike(k, n, Lm, Lp, Pm, Pp):
+                eps = 1e-10
+                ll = 0.0
+                for c in range(k):
+                    nc = n[c]
+                    if nc > 1:
+                        Lmc = Lm[c, c]
+                        Lpc = Lp[c, c]
+                        Pmc = max(Pm[c, c], eps)
+                        Ppc = max(Pp[c, c], eps)
+                        one_minus = max(1 - Pmc - Ppc, eps)
+                        ll += (Lmc * np.log(Pmc) + Lpc * np.log(Ppc)
+                            + ((nc * (nc - 1)) / 2 - Lmc - Lpc) * np.log(one_minus))
+                        for d in range(c + 1, k):
+                            Lmd = Lm[c, d]
+                            Lpd = Lp[c, d]
+                            Pmd = max(Pm[c, d], eps)
+                            Ppd = max(Pp[c, d], eps)
+                            one_minus_d = max(1 - Pmd - Ppd, eps)
+                            ll += (Lmd * np.log(Pmd) + Lpd * np.log(Ppd)
+                                + (nc * n[d] - Lmd - Lpd) * np.log(one_minus_d))
+                return ll
+
+            ll = _loglike(k, n, L_minus, L_plus, P_minus, P_plus)
+            # simple BIC form: k*(k+1) params (Pm and Pp per block), penalized by log(#pairs)
+            bic = k * (k + 1) * np.log(N * (N - 1) / 2) - 2 * ll
+            return bic
+
+        @staticmethod
+        def _greedy_min(adj, C0, method="bic", rng=None):
+            """Performs greedy node reassignment to minimize a specified objective function (BIC or Frustration) for community detection.
+
+            Parameters
+            ----------
+            adj : np.ndarray
+                Adjacency matrix representing the network/graph.
+            C0 : np.ndarray
+                Initial community assignments for each node.
+            method : str, optional
+                Objective function to minimize; either 'bic' (Bayesian Information Criterion) or 'frustration'. Default is 'bic'.
+            rng : np.random.Generator or None, optional
+                Random number generator for shuffling node order. If None, a new default generator is created.
+
+            Returns
+            -------
+            C : np.ndarray
+                Final community assignments for each node after optimization.
+            final_val : float
+                Value of the objective function (BIC or Frustration) after optimization.
+
+            Raises
+            ------
+            ValueError
+                If `method` is not 'bic' or 'frustration'.
+
+            Notes
+            -----
+            - The function iteratively reassigns nodes to communities to greedily minimize the chosen objective.
+            - If a community becomes empty after reassignment, community labels are relabeled compactly.
+            """
+            if method == "bic":
+                update = _updateBIC
+            elif method == "frustration":
+                update = _updateF
             else:
-                raise ValueError("Unknown method. Use 'bic' or 'frustration'.")
+                raise ValueError("method must be 'bic' or 'frustration'.")
 
-            K = K_up
-            stop = 0
-            iteration = 0  # Iteration counter
+            if rng is None:
+                rng = np.random.default_rng()
 
-            while stop != 1:
-                iteration += 1
-                V = np.arange(len(C))  # Node indices {0, 1, ..., N-1}
-                stop = 1
+            C = C0.copy()
+            K = len(np.unique(C))
+            stop = False
 
-                while len(V) > 0:
-                    # Select a random node from V and remove it.
-                    i = np.random.choice(V)
-                    V = np.delete(V, np.where(V == i))
+            while not stop:
+                stop = True
+                # Main difference with old version: we shuffle all nodes at once
+                V = np.arange(len(C))
+                rng.shuffle(V)
+
+                for i in V:
                     g = C[i]
-                    current_val = update(adjmat, C)
-                    delta = {}
+                    current_val = update(adj, C)
+                    delta_best = 0.0
+                    best_label = g
 
-                    # Consider all unique community labels.
-                    unique_C = np.unique(C)
-                    for cl in unique_C:
-                        if cl != g:
-                            C[i] = cl
-                            candidate_val = update(adjmat, C)
-                            delta[cl] = current_val - candidate_val  # Positive if candidate_val is lower.
-                            C[i] = g  # restore original assignment
+                    for cl in np.unique(C):
+                        if cl == g:
+                            continue
+                        C[i] = cl
+                        cand = update(adj, C)
+                        gain = current_val - cand
+                        if gain > delta_best:
+                            delta_best = gain
+                            best_label = cl
+                        C[i] = g  # restore
 
-                    # If any candidate improves the criterion, choose the best one.
-                    if any(val > 0 for val in delta.values()):
-                        stop = 0
-                        # Select the candidate with maximum improvement.
-                        best_candidate = max(delta, key=delta.get)
-                        C[i] = best_candidate
-
-                        # If the original community becomes empty, reassign labels.
+                    if delta_best > 0:
+                        C[i] = best_label
+                        stop = False
+                        # if old community becomes empty, relabel compactly
                         if np.sum(C == g) == 0:
-                            for j in range(len(C)):
-                                if C[j] > g:
-                                    C[j] -= 1
-                            K -= 1
+                            # compress labels to 0..K'-1
+                            uniq = np.unique(C)
+                            remap = {c: ix for ix, c in enumerate(uniq)}
+                            C = np.array([remap[x] for x in C], dtype=np.int64)
+                            K = len(uniq)
 
-            final_value = update(adjmat, C)
-            return C, final_value
+            final_val = update(adj, C)
+            return C, final_val
 
-        def run_single_trial(adj_matrix: np.ndarray):
-            comm, loss = greedy_min(
-                len(adj_matrix),
-                np.arange(len(adj_matrix)),
-                adj_matrix,
-                method=method
-            )
+        # --- initialisation strategies to diversify starts
+        def _make_start(rng: np.random.Generator) -> np.ndarray:
+            # strategy 1: shuffled identity
+            C = np.arange(self.N, dtype=np.int64)
+            rng.shuffle(C)
+            return C
+
+        def _make_start_random_k(rng: np.random.Generator) -> np.ndarray:
+            k = int(rng.integers(2, min(10, self.N) + 1))
+            C = rng.integers(0, k, size=self.N, dtype=np.int64)
+            # canonicalize labels
+            uniq = np.unique(C)
+            remap = {c: i for i, c in enumerate(uniq)}
+            return np.array([remap[x] for x in C], dtype=np.int64)
+
+        # pick a start generator at random per trial
+        def _make_start_mixture(rng: np.random.Generator) -> np.ndarray:
+            if rng.random() < 0.5:
+                return _make_start(rng)
+            return _make_start_random_k(rng)
+
+        # --- per-trial runners
+        def _single_trial_mixture(seed: int):
+            rng = np.random.default_rng(seed)
+            C0 = _make_start_mixture(rng)
+            # expects your improved greedy with seedable rng
+            C, loss = _greedy_min(self.graph, C0, method=method, rng=rng)
+            return C, float(loss), int(seed)
+
+        def _single_trial(seed):
+            rng = np.random.default_rng(seed)
+            C0 = np.arange(self.N, dtype=np.int64)  # identity labeling as a safe start
+            # Optional: you could also randomize starting labels for more diversity:
+            rng.shuffle(C0)
+            comm, loss = _greedy_min(self.graph, C0, method=method, rng=rng)
             return comm, loss
+        rng_global = np.random.default_rng(random_state)
+        seeds = rng_global.integers(0, 2**32 - 1, size=trials, dtype=np.uint32)
+        
+        def _run():
+            return Parallel(n_jobs=n_jobs, backend='loky', batch_size='auto', verbose=2 if show==True else 0)(
+                delayed(_single_trial)(int(s)) for s in seeds
+            )
+        
+        def _run_mixture():
+            return Parallel(n_jobs=n_jobs, backend='loky', batch_size='auto', verbose=2 if show==True else 0)(
+                delayed(_single_trial_mixture)(int(s)) for s in seeds
+            )
 
-        def run_trials(adj_matrix: np.ndarray, graph_type: str):
-            if show:
-                logging.info(f"Running {trials} {method.upper()} trials on {graph_type} graph...")
-            start_time = time()
+        if starter == 'uniform':
+            results = _run()
+        elif starter == 'mixture':
+            results = _run_mixture()
+        losses = np.array([loss for _, loss in results], dtype=float)
+        best_idx = int(np.nanargmin(losses))
+        best_comm = results[best_idx][0]
 
-            results = Parallel(n_jobs=n_jobs)(
-                delayed(run_single_trial)(adj_matrix) for _ in tqdm(range(trials), desc=f"Running trials for {graph_type} graph"))
-            
+        self.communities= best_comm
 
-            losses = [r[1] for r in results]
-            min_loss = np.min(losses)
-            best_idx = np.argmin(losses)
-            best_comm = results[best_idx][0]
-            num_infs = sum(np.isinf(l) for l in losses)
-            runtime = time() - start_time
+        return self.communities
 
-            return {
-                'best_comm': best_comm,
-                'min_loss': min_loss,
-                'num_infs': num_infs,
-                'runtime': runtime
-            }
-
-        # Run for both graphs
-        naive_stats = run_trials(self.naive_graph, "naive")
-        filtered_stats = run_trials(self.filtered_graph, "filtered")
-
-        # Save results
-        self.naive_communities = naive_stats['best_comm']
-        self.filtered_communities = filtered_stats['best_comm']
-        self.comm_stats = {'naive': naive_stats, 'filtered': filtered_stats, 'method': method}
-
-        return self.comm_stats
-    
 
     def _reorder_graph(self, graph, labels):
             """Reorder adjacency matrix by community labels."""
@@ -1330,10 +1607,10 @@ class TSeries:
         """Draw lines to separate communities."""
         boundaries = np.cumsum(np.unique(labels, return_counts=True)[1])[:-1]
         for b in boundaries:
-            ax.axhline(b - 0.5, color=color, linewidth=linewidth)
-            ax.axvline(b - 0.5, color=color, linewidth=linewidth)
+            ax.axhline(b - 0.1, color=color, linewidth=linewidth)
+            ax.axvline(b - 0.1, color=color, linewidth=linewidth)
 
-    def plot_communities(self, graph_type="filtered", export_path="", show=True):
+    def plot_communities(self, export_path="", show=True):
         """
         Plot reordered adjacency matrix by community labels with boxes.
 
@@ -1347,18 +1624,11 @@ class TSeries:
             If True, display the figure.
         """
 
-        if graph_type not in ["naive", "filtered"]:
-            raise ValueError("graph_type must be either 'naive' or 'filtered'")
-
-        if graph_type == "naive":
-            graph = self.naive_graph
-            labels = self.naive_communities
-        else:
-            graph = self.filtered_graph
-            labels = self.filtered_communities
-
+        
+        graph = self.graph
+        labels = self.communities
         if graph is None or labels is None:
-            raise ValueError(f"{graph_type}_graph or {graph_type}_communities not available. Run build_graph() and community_detection().")
+            raise ValueError(f"Graph or communities not available. Run build_graph() and community_detection().")
 
         reordered_graph, reordered_labels = self._reorder_graph(graph, labels)
 
@@ -1366,12 +1636,20 @@ class TSeries:
         bounds = [-1.5, -0.5, 0.5, 1.5]
         norm = BoundaryNorm(bounds, cmap.N)
 
-        fig, ax = plt.subplots(figsize=(8, 8))
+        fig, ax = plt.subplots(figsize=(5, 5))
         sns.heatmap(reordered_graph, cmap=cmap, norm=norm, 
-                    cbar_kws={'ticks': [-1, 0, 1]}, ax=ax, square=True)
+                    cbar_kws={'ticks': [-1, 0, 1], 'orientation':'horizontal','fraction':0.046}, ax=ax, square=True)
+
+        # ax.set_title(title)
+        #     # Place colorbar horizontally below the figure
+        #     plt.colorbar(
+        #         cax, ax=ax, orientation='horizontal', ticks=[-1, 0, 1],
+        #         fraction=0.046, pad=0.15, label='Link Value'
+        #     )
+
         self._draw_community_blocks(ax, reordered_labels, color='black', linewidth=1.5)
 
-        ax.set_title(f"{graph_type.capitalize()} Graph Reordered by Communities", fontsize=14, weight='bold')
+        ax.set_title(f"Graph Reordered by Communities", fontsize=14, weight='bold')
         ax.set_xlabel("ROI (Reordered)", fontsize=12)
         ax.set_ylabel("ROI (Reordered)", fontsize=12)
         ax.set_xticklabels([])
@@ -1379,7 +1657,157 @@ class TSeries:
 
         plt.tight_layout()
         if export_path:
-            plt.savefig(f"{export_path}_{graph_type}_communities.pdf", dpi=600)
+            plt.savefig(f"{export_path}_communities.pdf", dpi=600)
         if show:
             plt.show()
         plt.close()
+
+    def plot_block_matrix(self, export_path="", show=True):
+        """
+        Plot block matrix of the graph based on detected communities.
+
+        Parameters:
+        -----------
+        export_path : str, optional
+            Path to save the PDF figure. If empty, the plot is not saved.
+        show : bool, optional
+            If True, display the figure.
+        """
+
+        if self.graph is None or self.communities is None:
+            raise ValueError(f"Graph or communities not available. Run build_graph() and community_detection().")
+        @staticmethod
+        def compute_diagonal_block_probabilities(adj_matrix, community_labels):
+            """
+            Compute the probabilities of positive and negative links in the diagonal blocks of an adjacency matrix.
+
+            Parameters:
+            - adj_matrix: numpy array, adjacency matrix of the graph
+            - community_labels: numpy array, community labels for each node
+
+            Returns:
+            - dict: A dictionary with probabilities of positive and negative links for each community
+            """
+            unique_labels = np.unique(community_labels)
+            probabilities = {}
+            
+            for label in unique_labels:
+                # Get indices of nodes in the current community
+                community_indices = np.where(community_labels == label)[0]
+                N_c = len(community_indices)
+
+                if N_c > 1:  # Only compute if the community has more than one node
+                    # Extract the diagonal block for the current community
+                    community_block = adj_matrix[np.ix_(community_indices, community_indices)]
+
+                    # Count positive and negative links
+                    num_positive_links = np.sum(community_block == 1)
+                    num_negative_links = np.sum(community_block == -1)
+
+                    # Total possible links in the diagonal block
+                    total_links = N_c * (N_c - 1)
+
+                    # Compute probabilities
+                    prob_positive_links = num_positive_links / total_links
+                    prob_negative_links = num_negative_links / total_links
+
+                    probabilities[label] = {
+                        'prob_positive_links': prob_positive_links,
+                        'prob_negative_links': prob_negative_links
+                    }
+                else:
+                    probabilities[label] = {
+                        'prob_positive_links': 0,
+                        'prob_negative_links': 0
+                    }
+
+
+            return probabilities
+
+        @staticmethod
+        def compute_off_diagonal_block_probabilities(adj_matrix, community_labels):
+            """
+            Compute the probabilities of positive and negative links in the off-diagonal blocks of an adjacency matrix.
+
+            Parameters:
+            - adj_matrix: numpy array, adjacency matrix of the graph
+            - community_labels: numpy array, community labels for each node
+
+            Returns:
+            - dict: A dictionary with probabilities of positive and negative links for each pair of communities
+            """
+            unique_labels = np.unique(community_labels)
+            probabilities = {}
+
+            for i, label_i in enumerate(unique_labels):
+                for j, label_j in enumerate(unique_labels):
+                    if i < j:  # Only consider off-diagonal blocks
+                        # Get indices of nodes in the two communities
+                        indices_i = np.where(community_labels == label_i)[0]
+                        indices_j = np.where(community_labels == label_j)[0]
+
+                        # Extract the off-diagonal block
+                        block = adj_matrix[np.ix_(indices_i, indices_j)]
+
+                        # Count positive and negative links
+                        num_positive_links = np.sum(block == 1)
+                        num_negative_links = np.sum(block == -1)
+
+                        # Total possible links in the off-diagonal block
+                        total_links = len(indices_i) * len(indices_j)
+
+                        # Compute probabilities
+                        prob_positive_links = num_positive_links / total_links if total_links > 0 else 0
+                        prob_negative_links = num_negative_links / total_links if total_links > 0 else 0
+
+                        probabilities[(label_i, label_j)] = {
+                            'prob_positive_links': prob_positive_links,
+                            'prob_negative_links': prob_negative_links
+                        }
+
+            return probabilities
+
+        
+        diag_probs = compute_diagonal_block_probabilities(self.graph, self.communities)
+        off_probs = compute_off_diagonal_block_probabilities(self.graph, self.communities)
+
+        unique_labels = np.unique(self.communities)
+        M = np.empty((len(unique_labels), len(unique_labels)))
+
+        for i, li in enumerate(unique_labels):
+            for j, lj in enumerate(unique_labels):
+                if i == j:
+                    p_pos = diag_probs[li]['prob_positive_links']
+                    p_neg = diag_probs[li]['prob_negative_links']
+                    
+
+                else:
+                    key = (li, lj) if (li, lj) in off_probs else (lj, li)
+                    p_pos = off_probs[key]['prob_positive_links']
+                    p_neg = off_probs[key]['prob_negative_links']
+                M[i, j] = 1 if p_pos > p_neg else -1 if p_pos < p_neg else 0
+
+        fig,ax = plt.subplots(figsize=(5,5))
+        cmap = ListedColormap(["red", "white", "blue"])
+        bounds = [-1.5, -0.5, 0.5, 1.5]
+        norm = BoundaryNorm(bounds, cmap.N)
+        sns.heatmap(M, cmap=cmap, norm=norm, linecolor='gray', linewidths=0.5,
+                    cbar_kws={'ticks': [-1, 0, 1], 'orientation':'horizontal','fraction':0.046,'label':'Dominant Link Type'}, ax=ax, square=True)
+        ax.set_title(f"Block Matrix based on Communities", fontsize=14, weight='bold')
+        ax.set_xlabel("Community", fontsize=12)
+        ax.set_ylabel("Community", fontsize=12)
+        print(M.shape)
+        num_labels = M.shape[0]
+        ax.xaxis.set_major_locator(plt.FixedLocator(range(num_labels)))
+        ax.yaxis.set_major_locator(plt.FixedLocator(range(num_labels)))
+        ax.set_xticklabels([str(j+1) for j in range(num_labels)])
+        ax.set_yticklabels([str(j+1) for j in range(num_labels)], rotation=0)
+
+        plt.tight_layout()
+        if export_path:
+            plt.savefig(f"{export_path}_block_matrix.pdf", dpi=600)
+        if show:
+            plt.show()
+        plt.close()
+        return M
+    
