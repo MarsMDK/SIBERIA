@@ -4,94 +4,16 @@ from scipy.stats import binom
 import pandas as pd
 from fast_poibin import PoiBin
 from joblib import Parallel, delayed
-from time import time
-import logging
 import numba
 from numba import jit,prange
 from statsmodels.stats.multitest import multipletests
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
-from tqdm import tqdm
 import seaborn as sns
 from scipy.stats import ks_2samp
 
 
-"""
-TSeries class for analyzing time series data using various models.
-
-The TSeries class provides methods for initializing with a time series matrix, computing signatures, fitting models, 
-predicting probabilities, validating signatures, filtering signature matrices, building graphs, performing community detection, 
-and plotting results.
-
-Attributes:
-    n_jobs (int): Number of threads for parallel computation.
-    params (np.ndarray): Model parameters.
-    args (tuple): Arguments for the model.
-    ll (float): Log-likelihood value.of the error.
-    jacobian (np.ndarray): Jacobian matrix. matrix.
-    norm (float): Infinite norm of the Jacobian.
-    aic (float): Akaike Information Criterion value.rix.
-    args (tuple): Arguments for the model.
-    norm_rel_error (float): Relative norm of the error.arameters for optimization.
-    weighted_signature (np.ndarray): Weighted signature matrix.
-    binary_signature (np.ndarray): Binary signature matrix.
-    ensemble_signature (np.ndarray): Ensemble signature matrix.optimization.
-    model (str): Chosen model.
-    x0 (np.ndarray): Initial parameters for optimization. events.
-    tol (float): Tolerance for optimization..
-    eps (float): Epsilon for optimization.vents.
-    maxiter (int): Maximum iterations for optimization..
-    verbose (int): Verbosity level for optimization.
-    pit_plus (np.ndarray): Probabilities of positive events.optimization.
-    pit_minus (np.ndarray): Probabilities of negative events.
-    n_ensemble (int): Number of ensemble samples.ix.
-    bounds_lsq (tuple): Bounds for least squares optimization.
-    N (int): Number of rows in the time series matrix.e series data.
-    T (int): Number of columns in the time series matrix.ies data for positive weights.
-    tseries (np.ndarray): Time series data.
-    binary_tseries (np.ndarray): Binary time series data.
-    binary_tseries_positive (np.ndarray): Binary time series data for positive weights.ts.
-    binary_tseries_negative (np.ndarray): Binary time series data for negative weights.
-    ai_plus (np.ndarray): Row-wise sum of binary positive weights.egative weights.
-    kt_plus (np.ndarray): Column-wise sum of binary positive weights.ts.
-    a_plus (float): Sum of binary positive weights.
-    ai_minus (np.ndarray): Row-wise sum of binary negative weights.for positive weights.
-    kt_minus (np.ndarray): Column-wise sum of binary negative weights.
-    a_minus (float): Sum of binary negative weights.
-    implemented_models (list): List of implemented models.ts.
-    p_values_corrected (np.ndarray): Corrected p-values.
-    filtered_signature (np.ndarray): Filtered signature matrix.ts.
-    naive_graph (np.ndarray): Naive adjacency matrix.
-    filtered_graph (np.ndarray): Filtered adjacency matrix..
-    naive_communities (np.ndarray): Community assignments for the naive graph.ented models.
-    filtered_communities (np.ndarray): Community assignments for the filtered graph. matrix.
-    comm_stats (dict): Statistics for community detection.
-matrix.
-Methods: signature matrix.
-    __init__(self, data=None, n_jobs=1):
-        Initialize the TSeries instance with the time series matrix.
-    compute_signature(self):hted triplet counts.
-        Compute the binary and weighted signatures of time series data.
-    fit(self, model, x0=None, maxiter=1000, max_nfev=1000, verbose=0, tol=1e-8, eps=1e-8, output_params_path=None, imported_params=None, solver_type='fixed_point'):it__(self, data=None, n_jobs=4):
-        Fit the specified model to the data.with the weighted adjacency matrix.
-    predict(self):
-        Predict the probabilities of the occurrence of the events for the chosen model.ion matrices and the co-fluctuation matrices for the Time Series instance.
-    validate_signature(self, fdr_correction_flag=True, alpha=0.05):s_path=None):
-        Validate the signature of the model using analytical methods.elative norms.
-    build_graph(self):
-        Build naive and filtered graphs based on the filtered signature matrix.e probabilities of the occurrence of the events and their conditional weights for the chosen model.
-    plot_signature(self, export_path='', show=True):
-        Plot the empirical and filtered signature matrices as heatmaps.tion matrices with the chosen model.
-    plot_graph(self, export_path='', show=True):
-        Plot the naive and filtered adjacency matrices as heatmaps with discrete values.on matrix after the use of null model of choice.
-    community_detection(self, trials=500, n_jobs=None, method="bic", show=False):
-        Perform community detection on naive and filtered graphs using the chosen loss function.trices.
-"""
-
-
-
-#set number of threads for parallel computation in input
-# Set number of threads for parallel computation in input
+#Set number of threads for parallel computation in input
 
 class TSeries:
     """TSeries class for analyzing time series data using graph-based methods.
@@ -102,12 +24,11 @@ class TSeries:
         n_jobs (int): Number of parallel jobs to use for computations.
         params (numpy.ndarray): Fitted model parameters.
         ll (float): Log-likelihood of the fitted model.
-        jacobian (numpy.ndarray): Jacobian of the fitted model.
+        jac (numpy.ndarray): Jacobian of the fitted model.
         norm (float): Norm of the Jacobian.
         aic (float): Akaike Information Criterion of the fitted model.
         args (tuple): Arguments for the model.
         norm_rel_error (float): Relative error of the fitted model.
-        weighted_signature (numpy.ndarray): Weighted signature matrix.
         binary_signature (numpy.ndarray): Binary signature matrix.
         ensemble_signature (numpy.ndarray): Ensemble signature matrix.
         model (str): Name of the model being used.
@@ -118,11 +39,6 @@ class TSeries:
         verbose (int): Verbosity level for optimization.
         pit_plus (numpy.ndarray): Predicted probabilities for positive events.
         pit_minus (numpy.ndarray): Predicted probabilities for negative events.
-        naive_graph (numpy.ndarray): Naive adjacency matrix.
-        filtered_graph (numpy.ndarray): Filtered adjacency matrix.
-        naive_communities (numpy.ndarray): Community assignments for the naive graph.
-        filtered_communities (numpy.ndarray): Community assignments for the filtered graph.
-        comm_stats (dict): Statistics for community detection.
     
     TSeries instance must be initialized with the weighted adjacency matrix in 2D numpy array format.
     On initialization, it computes in-degrees, out-degrees, reciprocated degrees, out-strengths, in-strengths, 
@@ -138,14 +54,12 @@ class TSeries:
             Fit the specified model to the data.
         predict(self):
             Predict the probabilities of the occurrence of the events for the chosen model.
-        validate_signature(self, fdr_correction_flag=True, alpha=0.05):
-            Validate the signature of the model using analytical methods.
+        check_distribution_signature(self, n_ensemble=1000, ks_score=True, alpha=0.05):
+            Validate the distribution of the signature using ensemble simulations and, optionally, a KS score.
         build_graph(self):
             Build naive and filtered graphs based on the filtered signature matrix.
-        plot_signature(self, export_path='', show=True):
-            Plot the empirical and filtered signature matrices as heatmaps.
         plot_graph(self, export_path='', show=True):
-            Plot the naive and filtered adjacency matrices as heatmaps with discrete values.
+            Plot the naive/filtered adjacency matrix as a heatmap with discrete values.
         community_detection(self, trials=500, n_jobs=None, method="bic", show=False):
             Perform community detection on naive and filtered graphs using the chosen loss function.
     """
@@ -159,13 +73,12 @@ class TSeries:
         self.n_jobs = n_jobs
         self.params = None
         self.ll = None
-        self.jacobian = None
+        self.jac = None
         self.norm = None
         self.aic = None
         self.args = None
         self.norm_rel_error = None
         
-        self.weighted_signature = None
         self.binary_signature = None
         self.ensemble_signature = None
 
@@ -179,11 +92,8 @@ class TSeries:
 
         self.pit_plus = None
         self.pit_minus = None
-        self.wit_plus = None
-        self.wit_minus = None
 
         self.n_ensemble = None
-        self.bounds_lsq = None
 
         #Check on data
         if data is None:
@@ -244,7 +154,7 @@ class TSeries:
             binary_signature (int): Difference between binary concordant and discordant motifs.
         """
         
-        @staticmethod       
+        #@staticmethod       
         @jit(nopython=True) 
         def pairwise_motif(data1, data2):
             """
@@ -348,7 +258,7 @@ class TSeries:
         
         if self.model == 'bSRGM':
 
-            @staticmethod
+            #@staticmethod
             @jit(nopython=True)
             def loglikelihood_bsr_model(params,a_plus,a_minus,shape):
                 """Log-likelihood function for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
@@ -362,7 +272,7 @@ class TSeries:
 
                 return - ll
             
-            @staticmethod
+            #@staticmethod
             @jit(nopython=True)
             def jacobian_bsr_model(params,a_plus,a_minus,shape):
                 """Jacobian function for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
@@ -383,7 +293,7 @@ class TSeries:
                 
                 return - jac
             
-            @staticmethod
+            #@staticmethod
             @jit(nopython=True)
             def relative_error_bsr_model(params,a_plus,a_minus,shape,tol=1e-10):
                 """Relative error function for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
@@ -419,7 +329,7 @@ class TSeries:
 
         elif self.model == 'bSCM':
 
-            @staticmethod
+            #@staticmethod
             @jit(nopython=True)
             def loglikelihood_bscm_model(params,ai_plus,kt_plus,ai_minus,kt_minus):
                 """Log-likelihood function for the Binary Bipartite Signed Configuration Model (for Time Series)"""
@@ -446,7 +356,7 @@ class TSeries:
                 
                 return - ll
             
-            @staticmethod
+            #@staticmethod
             @jit(nopython=True, parallel=True)
             def jacobian_bscm_model(params,ai_plus,kt_plus,ai_minus,kt_minus):
                 """Jacobian function for the Binary Bipartite-Signed Configuration Model (for Time Series)"""
@@ -527,7 +437,7 @@ class TSeries:
 
             
 
-            @staticmethod
+            #@staticmethod
             @jit(nopython=True)
             def fixed_point_solver_bscm_model(ai_plus, kt_plus, ai_minus, kt_minus, max_iterations=10000, diff=1e-08, tol=1e-06, print_steps=100):
                 """Jacobian function for the Binary Bipartite-Signed Configuration Model (for Time Series)"""
@@ -650,7 +560,7 @@ class TSeries:
         
 
         if self.model == "bSRGM":
-            @staticmethod
+            #@staticmethod
             def bsr_model_proba_events(params, shape):
                 """Compute the probabilities of the occurrence of the events for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
                 alpha = np.exp(-params[0])
@@ -669,7 +579,7 @@ class TSeries:
             
         
         elif self.model == "bSCM":
-            @staticmethod
+            #@staticmethod
             def bscm_model_proba_events(params,shape):
                 """Compute the probabilities of the occurrence of the events for the Binary Bipartite-Signed Configuration Model (for Time Series)"""
                 N = shape[0]
@@ -697,18 +607,18 @@ class TSeries:
         elif self.model == "naive":pass
             
 
-    def check_distribution_signature(self, n_ensemble = 1000, ks_score=True, alpha = 0.05, ks_method = 'auto'):
+    def check_distribution_signature(self, n_ensemble = 1000, ks_score=True, alpha = 0.05):
         """
         Validate the signature of the model using either ensemble or analytical methods.
         Parameters:
         -----------
-        fdr_correction_flag : bool, optional
-            Flag to indicate whether to apply False Discovery Rate (FDR) correction. Default is True.
         n_ensemble : int, optional
-            Number of ensembles to generate for the validation. Default is 1000.
+            Number of ensemble realizations used to build the empirical signature distribution. Default is 1000.
+        ks_score : bool, optional
+            If True, compute the Kolmogorov–Smirnov agreement score between empirical and analytical
+            signature distributions. Default is True.
         alpha : float, optional
-            Significance level for statistical tests. Default is 0.05.
-        analytical : bool, optional
+            Significance level used in the KS test when computing the KS score. Default is 0.05.
     
             Flag to indicate whether to use analytical methods for validation. Default is True.
         Raises:
@@ -799,7 +709,7 @@ class TSeries:
             return ensemble_signature        
                                 
         if self.model == 'bSRGM':
-            @staticmethod       
+            #@staticmethod       
             @jit(nopython=True,parallel=True)
             def sample_analytical_bsr_model(pit_plus,pit_minus,n_ensemble):
                 """Compute the p-values for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
@@ -817,13 +727,13 @@ class TSeries:
                             
                 return signature_ens
             
-            @staticmethod       
+            #@staticmethod       
             def compute_c_ens(i, j, T, ensemble_signature, q_plus):
                 """Helper function to compute c_ens for a specific (i, j)."""
                 ensemble_cij = (T + ensemble_signature[i, j, :]) / 2
                 return binom.pmf(ensemble_cij.astype(int), T, q_plus[0])
 
-            @staticmethod       
+            #@staticmethod       
             def sample_analytical_bsr_model_2(pit_plus, pit_minus, ensemble_signature, n_jobs):
                 """Compute the p-values for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
                 N = pit_plus.shape[0]
@@ -856,7 +766,7 @@ class TSeries:
         elif self.model == 'bSCM':
 
             
-            @staticmethod
+            #@staticmethod
             def compute_pair_signature(i, j, pit_plus, pit_minus, n_ensemble, T):
                 """
                 Compute the ensemble signature for a single node pair (i, j).
@@ -897,7 +807,7 @@ class TSeries:
                 return i, j, ensemble_signature
 
 
-            @staticmethod
+            #@staticmethod
             def sample_analytical_bscm_model_poibin(pit_plus, pit_minus, n_ensemble, n_jobs=-1):
                 """
                 Compute ensemble signatures for the Binary Bipartite-Signed Random Graph Model with parallelization.
@@ -926,8 +836,8 @@ class TSeries:
 
                 return ensemble_signature
             
-            @staticmethod
-            def compute_pair_iteration(i, j, pit_plus, pit_minus, n_ensemble, T):
+            #@staticmethod
+            def compute_pair_iteration(i, j, pit_plus, pit_minus, T):
                 """
                 Compute the ensemble PMF for a single node pair (i, j).
 
@@ -936,7 +846,6 @@ class TSeries:
                     j (int): Column index.
                     pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
                     pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
-                    n_ensemble (int): Number of ensemble samples to generate.
                     T (int): Number of trials (time steps).
 
                 Returns:
@@ -958,7 +867,7 @@ class TSeries:
                 return i, j, pmf_values
 
 
-            @staticmethod
+            #@staticmethod
             def sample_analytical_bscm_model_poibin_dist(pit_plus, pit_minus, ensemble_signature, n_jobs=-1):
                 """
                 Compute ensemble PMFs for the Binary Bipartite-Signed Random Graph Model with parallelization.
@@ -973,12 +882,12 @@ class TSeries:
                     numpy.ndarray: N x N x (T+1) array of PMFs.
                 """
                 N, T = pit_plus.shape
-                dist_signature = np.empty((N, N, T + 1), dtype=object)
+                dist_signature = np.empty((N, N, T + 1), dtype=float)
 
                 # Outer loop over i with progress tracking
                 for i in range(N):
                     results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_pair_iteration)(i, j, pit_plus, pit_minus, ensemble_signature.shape[-1], T)
+                        delayed(compute_pair_iteration)(i, j, pit_plus, pit_minus, T)
                         for j in range(N)
                     )
                     for _, j, pmf_values in results:
@@ -999,16 +908,16 @@ class TSeries:
 
         if ks_score==True:
             ### Statistical KS_scores
-            @staticmethod
-            def compute_ks_score(ensemble_signature, analytical_signature, ks_method='auto'):
+            #@staticmethod
+            def compute_ks_score(ensemble_signature, analytical_signature, alpha):
                 """
                 Compute the Kolmogorov-Smirnov (KS) scores between ensemble and analytical signatures.
                 Parameters:
                     ensemble_signature (numpy.ndarray): N x N x n_ensemble array of ensemble signatures.
                     analytical_signature (numpy.ndarray): N x N x n_analytical array of analytical signatures.
-                    ks_method (str): Method for KS test ('auto', 'exact', 'asymp').
+                    alpha (float): threshold for kS test
                 Returns:
-                    numpy.ndarray: N x N array of KS scores.
+                    Returns (float): fraction of node pairs (i, j) for which the KS test p-value ≥ alpha
                 """
                 N = ensemble_signature.shape[0]
                 ks_score = 0
@@ -1017,14 +926,14 @@ class TSeries:
                     for j in range(i,N):
                         if i != j:
                             num_tot += 1
-                            _, p_KS = ks_2samp(ensemble_signature[i, j, :], analytical_signature[i, j, :], alternative='two-sided', mode=ks_method)
-                            if p_KS >= 0.05:
+                            _, p_KS = ks_2samp(ensemble_signature[i, j, :], analytical_signature[i, j, :], alternative='two-sided', mode='auto')
+                            if p_KS >= alpha:
                                 ks_score += 1
                 
                 ks_score_normalized = ks_score / num_tot
                 return ks_score_normalized
 
-            self.ks_score = compute_ks_score(self.ensemble_signature, self.analytical_signature)
+            self.ks_score = compute_ks_score(self.ensemble_signature, self.analytical_signature, alpha)
 
             return self.ks_score
 
@@ -1068,7 +977,7 @@ class TSeries:
         if self.pit_plus is None:
             raise ValueError("Predict probabilities and conditional weights first!")
         
-        @staticmethod
+        #@staticmethod
         def fdr_correction(p_values, alpha=0.05):
             
             
@@ -1142,12 +1051,15 @@ class TSeries:
                 return p_values, cdfx_condition
             
             model_p_values, cdfx_condition = p_values_analytical_bsr_model(self.pit_plus,self.pit_minus,self.binary_concordant_motifs)
-            self.p_values_corrected = fdr_correction(model_p_values,alpha=self.alpha)
+            if self.fdr_correction_flag:                                                   #the flag was not used otherwise
+                self.p_values_corrected = fdr_correction(model_p_values, alpha=self.alpha)
+            else:
+                self.p_values_corrected = model_p_values
             self.cdfx_condition = cdfx_condition
 
         elif self.model == 'bSCM':
             
-            @staticmethod
+            #@staticmethod
             def p_values_analytical_bscm_model(pit_plus,pit_minus,concordant_motifs):
                 """
                 Compute the p-values for a given analytical bSCM (binary Signed Configuration Model) model.
@@ -1188,7 +1100,10 @@ class TSeries:
 
             
             model_p_values, cdfx_condition = p_values_analytical_bscm_model(self.pit_plus,self.pit_minus,self.binary_concordant_motifs)
-            self.p_values_corrected = fdr_correction(model_p_values,alpha=self.alpha)
+            if self.fdr_correction_flag:
+                self.p_values_corrected = fdr_correction(model_p_values, alpha=self.alpha)
+            else:
+                self.p_values_corrected = model_p_values
             self.cdfx_condition = cdfx_condition
         else:
             raise ValueError('The model is not valid!')
@@ -1341,7 +1256,7 @@ class TSeries:
         if n_jobs is None:
             n_jobs = self.n_jobs
 
-        @staticmethod
+        #@staticmethod
         @jit(nopython=True)
         def _updateF(adj, C):
             """
@@ -1358,7 +1273,7 @@ class TSeries:
             return F / 2.0
 
         
-        @staticmethod
+        #@staticmethod
         @jit(nopython=True)
         def _compute_edges_probabilities(adj, C_index, sign):
             """
@@ -1402,9 +1317,9 @@ class TSeries:
                         prob[i, j] = 0.0
             return prob, total_links, count_matrix
 
-        # @staticmethod
+        #@staticmethod
         # @jit(nopython=True)
-        @staticmethod
+        #@staticmethod
         def _updateBIC(adj, C):
             """
             BIC for signed SBM-like model with separate P(+) and P(-) per (community, community).
@@ -1453,7 +1368,7 @@ class TSeries:
             bic = k * (k + 1) * np.log(N * (N - 1) / 2) - 2 * ll
             return bic
 
-        @staticmethod
+        #@staticmethod
         def _greedy_min(adj, C0, method="bic", rng=None):
             """Performs greedy node reassignment to minimize a specified objective function (BIC or Frustration) for community detection.
 
@@ -1563,7 +1478,7 @@ class TSeries:
             C0 = _make_start_mixture(rng)
             # expects your improved greedy with seedable rng
             C, loss = _greedy_min(self.graph, C0, method=method, rng=rng)
-            return C, float(loss), int(seed)
+            return C, float(loss)
 
         def _single_trial(seed):
             rng = np.random.default_rng(seed)
@@ -1676,7 +1591,7 @@ class TSeries:
 
         if self.graph is None or self.communities is None:
             raise ValueError(f"Graph or communities not available. Run build_graph() and community_detection().")
-        @staticmethod
+        #@staticmethod
         def compute_diagonal_block_probabilities(adj_matrix, community_labels):
             """
             Compute the probabilities of positive and negative links in the diagonal blocks of an adjacency matrix.
@@ -1724,7 +1639,7 @@ class TSeries:
 
             return probabilities
 
-        @staticmethod
+        #@staticmethod
         def compute_off_diagonal_block_probabilities(adj_matrix, community_labels):
             """
             Compute the probabilities of positive and negative links in the off-diagonal blocks of an adjacency matrix.
