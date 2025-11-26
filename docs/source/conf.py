@@ -73,5 +73,15 @@ master_doc = 'index'
 # Show also documentation for _init_
 autoclass_content = 'both'
 
-autodoc_mock_imports = ['numpy', 'scipy', 'numba',
-                        'matplotlib', 'sphinx_rtd_theme']
+autodoc_mock_imports = ['numpy',
+    'scipy',
+    'numba',
+    'matplotlib',
+    'sphinx_rtd_theme',
+    'pandas',
+    'fast_poibin',
+    'joblib',
+    'statsmodels',
+    'tqdm',
+    'seaborn']
+
