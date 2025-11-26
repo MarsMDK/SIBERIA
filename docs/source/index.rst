@@ -3,7 +3,7 @@ SIBERIA: SIgned BEnchmarks foR tIme series Analysis
 
 SIBERIA is a Python 3 package for rigorous **signed time-series network analysis**.
 
-Starting from an N x T matrix of standardized time series, it builds **signed co-fluctuation signatures**, fits **maximum-entropy null models**, and produces **validated signed graphs** that can be analyzed via community detection and block-structure inspection.
+Starting from an :math:`N \times T` matrix of standardized time series, it builds **signed co-fluctuation signatures**, fits **maximum-entropy null models**, and produces **validated signed graphs** that can be analyzed via community detection and block-structure inspection.
 
 SIBERIA implements advanced null models (**bSRGM**, **bSCM**, plus a simple **naive** projection) to distinguish meaningful mesoscale structure from noise, supporting reproducible and interpretable time-series network analysis.
 
