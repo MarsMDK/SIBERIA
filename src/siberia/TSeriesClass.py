@@ -1011,10 +1011,7 @@ class TSeries:
         False Discovery Rate (FDR) correction. Depending on the model type, it uses analytical 
         methods for validation. The function supports two model types: 'bSRGM' and 'bSCM'.
 
-        Returns
-        --------
-        numpy.ndarray
-            A filtered signature matrix where elements are retained based on the significance level.
+        A filtered signature matrix where elements are retained based on the significance level.
         - For the 'bSRGM' model, p-values are computed using a binomial cumulative distribution function.
         - For the 'bSCM' model, p-values are computed using the Poisson Binomial distribution.
         - The FDR correction is applied to the upper triangular part of the p-values matrix, and the 
