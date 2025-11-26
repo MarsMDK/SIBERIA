@@ -15,140 +15,128 @@ from tqdm import tqdm
 import seaborn as sns
 
 
-"""
-TSeries class for analyzing time series data using various models.
-
-The TSeries class provides methods for initializing with a time series matrix, computing signatures, fitting models, 
-predicting probabilities, validating signatures, filtering signature matrices, building graphs, performing community detection, 
-and plotting results.
-
-Attributes:
-    n_jobs (int): Number of threads for parallel computation.
-    params (np.ndarray): Model parameters.
-    args (tuple): Arguments for the model.
-    ll (float): Log-likelihood value.of the error.
-    jacobian (np.ndarray): Jacobian matrix. matrix.
-    norm (float): Infinite norm of the Jacobian.
-    aic (float): Akaike Information Criterion value.rix.
-    args (tuple): Arguments for the model.
-    norm_rel_error (float): Relative norm of the error.arameters for optimization.
-    weighted_signature (np.ndarray): Weighted signature matrix.
-    binary_signature (np.ndarray): Binary signature matrix.
-    ensemble_signature (np.ndarray): Ensemble signature matrix.optimization.
-    model (str): Chosen model.
-    x0 (np.ndarray): Initial parameters for optimization. events.
-    tol (float): Tolerance for optimization..
-    eps (float): Epsilon for optimization.vents.
-    maxiter (int): Maximum iterations for optimization..
-    verbose (int): Verbosity level for optimization.
-    pit_plus (np.ndarray): Probabilities of positive events.optimization.
-    pit_minus (np.ndarray): Probabilities of negative events.
-    n_ensemble (int): Number of ensemble samples.ix.
-    bounds_lsq (tuple): Bounds for least squares optimization.
-    N (int): Number of rows in the time series matrix.e series data.
-    T (int): Number of columns in the time series matrix.ies data for positive weights.
-    tseries (np.ndarray): Time series data.
-    binary_tseries (np.ndarray): Binary time series data.
-    binary_tseries_positive (np.ndarray): Binary time series data for positive weights.ts.
-    binary_tseries_negative (np.ndarray): Binary time series data for negative weights.
-    ai_plus (np.ndarray): Row-wise sum of binary positive weights.egative weights.
-    kt_plus (np.ndarray): Column-wise sum of binary positive weights.ts.
-    a_plus (float): Sum of binary positive weights.
-    ai_minus (np.ndarray): Row-wise sum of binary negative weights.for positive weights.
-    kt_minus (np.ndarray): Column-wise sum of binary negative weights.
-    a_minus (float): Sum of binary negative weights.
-    implemented_models (list): List of implemented models.ts.
-    p_values_corrected (np.ndarray): Corrected p-values.
-    filtered_signature (np.ndarray): Filtered signature matrix.ts.
-    naive_graph (np.ndarray): Naive adjacency matrix.
-    filtered_graph (np.ndarray): Filtered adjacency matrix..
-    naive_communities (np.ndarray): Community assignments for the naive graph.ented models.
-    filtered_communities (np.ndarray): Community assignments for the filtered graph. matrix.
-    comm_stats (dict): Statistics for community detection.
-matrix.
-Methods: signature matrix.
-    __init__(self, data=None, n_jobs=1):
-        Initialize the TSeries instance with the time series matrix.
-    compute_signature(self):hted triplet counts.
-        Compute the binary and weighted signatures of time series data.
-    fit(self, model, x0=None, maxiter=1000, max_nfev=1000, verbose=0, tol=1e-8, eps=1e-8, output_params_path=None, imported_params=None, solver_type='fixed_point'):it__(self, data=None, n_jobs=4):
-        Fit the specified model to the data.with the weighted adjacency matrix.
-    predict(self):
-        Predict the probabilities of the occurrence of the events for the chosen model.ion matrices and the co-fluctuation matrices for the Time Series instance.
-    validate_signature(self, fdr_correction_flag=True, alpha=0.05):s_path=None):
-        Validate the signature of the model using analytical methods.elative norms.
-    build_graph(self):
-        Build naive and filtered graphs based on the filtered signature matrix.e probabilities of the occurrence of the events and their conditional weights for the chosen model.
-    plot_signature(self, export_path='', show=True):
-        Plot the empirical and filtered signature matrices as heatmaps.tion matrices with the chosen model.
-    plot_graph(self, export_path='', show=True):
-        Plot the naive and filtered adjacency matrices as heatmaps with discrete values.on matrix after the use of null model of choice.
-    community_detection(self, trials=500, n_jobs=None, method="bic", show=False):
-        Perform community detection on naive and filtered graphs using the chosen loss function.trices.
-"""
-
-
 
 #set number of threads for parallel computation in input
 # Set number of threads for parallel computation in input
 
 class TSeries:
-    """TSeries class for analyzing time series data using graph-based methods.
-    The TSeries class is designed to process a weighted adjacency matrix in 2D numpy array format. 
-    It computes various graph-based statistics, including in-degrees, out-degrees, reciprocated degrees, 
-    out-strengths, in-strengths, reciprocated strengths, and triadic statistics such as occurrences, 
-    intensities, and fluxes.
-        n_jobs (int): Number of parallel jobs to use for computations.
-        params (numpy.ndarray): Fitted model parameters.
-        ll (float): Log-likelihood of the fitted model.
-        jacobian (numpy.ndarray): Jacobian of the fitted model.
-        norm (float): Norm of the Jacobian.
-        aic (float): Akaike Information Criterion of the fitted model.
-        args (tuple): Arguments for the model.
-        norm_rel_error (float): Relative error of the fitted model.
-        weighted_signature (numpy.ndarray): Weighted signature matrix.
-        binary_signature (numpy.ndarray): Binary signature matrix.
-        ensemble_signature (numpy.ndarray): Ensemble signature matrix.
-        model (str): Name of the model being used.
-        x0 (numpy.ndarray): Initial guess for model parameters.
-        tol (float): Tolerance for optimization.
-        eps (float): Step size for numerical approximation.
-        maxiter (int): Maximum number of iterations for optimization.
-        verbose (int): Verbosity level for optimization.
-        pit_plus (numpy.ndarray): Predicted probabilities for positive events.
-        pit_minus (numpy.ndarray): Predicted probabilities for negative events.
-        naive_graph (numpy.ndarray): Naive adjacency matrix.
-        filtered_graph (numpy.ndarray): Filtered adjacency matrix.
-        naive_communities (numpy.ndarray): Community assignments for the naive graph.
-        filtered_communities (numpy.ndarray): Community assignments for the filtered graph.
-        comm_stats (dict): Statistics for community detection.
-    
-    TSeries instance must be initialized with the weighted adjacency matrix in 2D numpy array format.
-    On initialization, it computes in-degrees, out-degrees, reciprocated degrees, out-strengths, in-strengths, 
-    reciprocated strengths, and triadic statistics such as occurrences, intensities, and fluxes.
-
-    Methods:
-        __init__(self, data=None, n_jobs=1):
-            Initialize the TSeries instance with the time series matrix.
-        compute_signature(self):
-            Compute the binary and weighted signatures of time series data.
-        fit(self, model, x0=None, maxiter=1000, max_nfev=1000, verbose=0, tol=1e-8, eps=1e-8, 
-            output_params_path=None, imported_params=None, solver_type='fixed_point'):
-            Fit the specified model to the data.
-        predict(self):
-            Predict the probabilities of the occurrence of the events for the chosen model.
-        validate_signature(self, fdr_correction_flag=True, alpha=0.05):
-            Validate the signature of the model using analytical methods.
-        build_graph(self):
-            Build naive and filtered graphs based on the filtered signature matrix.
-        plot_signature(self, export_path='', show=True):
-            Plot the empirical and filtered signature matrices as heatmaps.
-        plot_graph(self, export_path='', show=True):
-            Plot the naive and filtered adjacency matrices as heatmaps with discrete values.
-        community_detection(self, trials=500, n_jobs=None, method="bic", show=False):
-            Perform community detection on naive and filtered graphs using the chosen loss function.
     """
-    
+    TSeries: Graph-Based Time Series Analysis Class
+    The TSeries class provides a comprehensive framework for analyzing time series data using graph-based methods.
+    It is designed to process a weighted adjacency matrix (2D numpy array) representing a N x T time series and extract a rich set of statistics,
+    including binary signatures, motif statistics, model fitting, signed graph projection, and signed community detection.
+    Key Features:
+    -------------
+    - Standardizes input time series data (row-wise mean ~0, std ~1).
+    - Computes binary time series representations (positive/negative motifs).
+    - Calculates motif-based signatures and concordance/discordance matrices.
+    - Supports model fitting for binary Signed Random Graph Model (bSRGM) and binary Signed Configuration Model (bSCM).
+    - Predicts event probabilities for fitted models.
+    - Validates signature distributions via ensemble simulations and analytical methods (KS test).
+    - Builds filtered graphs based on statistical significance (with FDR correction).
+    - Detects communities using greedy minimization of BIC or frustration objectives.
+    - Visualizes graphs, communities, and block matrices.
+    data : np.ndarray
+        2D numpy array (N x T) representing the time series matrix (N nodes, T time steps).
+    n_jobs : int, optional
+        Number of parallel jobs for computations (default: 1).
+    Attributes
+    n_jobs : int
+        Number of parallel jobs used.
+    N : int
+        Number of nodes (rows in data).
+    T : int
+        Number of time steps (columns in data).
+    tseries : np.ndarray
+        Standardized time series matrix.
+    binary_tseries : np.ndarray
+        Binary sign matrix of time series.
+    binary_tseries_positive : np.ndarray
+        Matrix of positive binary motifs.
+    binary_tseries_negative : np.ndarray
+        Matrix of negative binary motifs.
+    ai_plus, ai_minus : np.ndarray
+        Row-wise sums of positive/negative motifs.
+    kt_plus, kt_minus : np.ndarray
+        Column-wise sums of positive/negative motifs.
+    a_plus, a_minus : float
+        Total sum of positive/negative motifs.
+    binary_concordant_motifs : np.ndarray
+        Matrix of concordant motif counts.
+    binary_discordant_motifs : np.ndarray
+        Matrix of discordant motif counts.
+    binary_signature : np.ndarray
+        Matrix of binary signature values.
+    params : np.ndarray
+        Fitted model parameters.
+    ll : float
+        Log-likelihood of the fitted model.
+    jac : np.ndarray
+        Jacobian of the fitted model.
+    norm : float
+        Norm of the Jacobian.
+    aic : float
+        Akaike Information Criterion of the fitted model.
+    norm_rel_error : float
+        Relative error of the fitted model.
+        Name of the fitted model.
+    x0 : np.ndarray
+        Initial guess for model parameters.
+    tol : float
+        Tolerance for optimization.
+    eps : float
+        Step size for numerical approximation.
+    maxiter : int
+        Maximum number of optimization iterations.
+    verbose : int
+        Verbosity level.
+    pit_plus, pit_minus : np.ndarray
+        Predicted probabilities for positive/negative events.
+    n_ensemble : int
+        Number of ensemble realizations for validation.
+    ensemble_signature : np.ndarray
+        Ensemble signature matrix.
+    analytical_signature : np.ndarray
+        Analytical signature matrix.
+    analytical_signature_dist : np.ndarray
+        Analytical signature distribution.
+    ks_score : float
+        Kolmogorov-Smirnov score for signature validation.
+    p_values_corrected : np.ndarray
+        FDR-corrected p-values matrix.
+    cdfx_condition : np.ndarray
+        Matrix indicating direction of statistical significance.
+    graph : np.ndarray
+        Filtered adjacency matrix (projection graph).
+    communities : np.ndarray
+        Community labels for each node.
+    Methods
+    __init__(self, data=None, n_jobs=1)
+        Initialize the TSeries instance and compute marginals.
+    compute_signature(self)
+        Compute binary signatures and motif statistics.
+    fit(self, model, ...)
+        Fit a specified model ('bSRGM', 'bSCM') to the data.
+    predict(self)
+        Predict event probabilities for the fitted model.
+    check_distribution_signature(self, n_ensemble=1000, ks_score=True, alpha=0.05)
+        Validate signature distribution using ensemble and analytical methods.
+    build_graph(self, fdr_correction_flag=True, alpha=0.05)
+        Build filtered graph using statistical significance (with FDR correction).
+    plot_graph(self, export_path='', show=True)
+        Plot the adjacency matrix as a heatmap.
+    community_detection(self, trials=500, n_jobs=None, method="bic", show=False, ...)
+        Detect communities using greedy minimization of BIC or frustration.
+    plot_communities(self, export_path="", show=True)
+        Plot reordered adjacency matrix with community blocks.
+    plot_block_matrix(self, export_path="", show=True)
+    - The class is optimized for parallel computation and large time series datasets.
+    - All statistical tests and corrections are performed on the upper triangular part of the projection matrices for efficiency.
+    - Community detection supports robust initialization strategies for reproducibility.
+    - Visualization methods use discrete colormaps for signed graphs.
+        If input data is missing or incorrectly formatted, or if required computations are not performed.
+        If input types are incorrect or unsupported.
+    """
     
     def __init__(
         self,
