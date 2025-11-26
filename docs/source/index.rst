@@ -325,7 +325,8 @@ Guide
    :caption: Contents:
 
    install
-   Siberia
+   siberia
    license
    contacts
+
 
