@@ -1,0 +1,13 @@
+numpy
+scipy
+pandas
+matplotlib
+tqdm
+joblib
+numba
+statsmodels
+fast-poibin
+seaborn
+
+[dev]
+pytest

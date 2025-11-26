@@ -1,3 +1,30 @@
+Metadata-Version: 2.4
+Name: siberia
+Version: 0.1.0
+Summary: SIBERIA (SIgned BEnchmarks foR tIme series Analysis) provides maximum-entropy null models and validation methods for signed networks derived from time series.
+Author-email: Marzio Di Vece <marzio.divece@sns.it>, Emanuele Agrimi <emanuele.agrimi@imtlucca.it>, Samuele Tatullo <samuele.tatullo@imtlucca.it>
+Project-URL: Homepage, https://github.com/MarsMDK/siberia
+Keywords: maximum entropy methods,time series,network filtering,graph,network,entropy
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: matplotlib
+Requires-Dist: tqdm
+Requires-Dist: joblib
+Requires-Dist: numba
+Requires-Dist: statsmodels
+Requires-Dist: fast-poibin
+Requires-Dist: seaborn
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Dynamic: license-file
+
 ![PyPI](https://img.shields.io/badge/pypi-v0.1.0-blue) [![License:GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) ![Python Version](https://img.shields.io/badge/Python-3.10.12-blue)
 [![Paper](https://img.shields.io/badge/arXiv-2508.00542-b31b1b.svg)](https://arxiv.org/abs/2508.00542)
 
