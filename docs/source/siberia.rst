@@ -9,9 +9,7 @@ plotting, and performing community detection are included in the :class:`TSeries
 
 .. automodule:: siberia.TSeries
    :members:
-   :undoc-members:
-   :show-inheritance:
-
+   
 
 
 
