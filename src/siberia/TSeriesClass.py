@@ -1010,6 +1010,8 @@ class TSeries:
         This function validates the signature of the model by computing p-values and applying 
         False Discovery Rate (FDR) correction. Depending on the model type, it uses analytical 
         methods for validation. The function supports two model types: 'bSRGM' and 'bSCM'.
+
+        Returns
         --------
         numpy.ndarray
             A filtered signature matrix where elements are retained based on the significance level.
