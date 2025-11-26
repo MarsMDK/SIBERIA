@@ -321,13 +321,14 @@ Guide
 =====
 
 .. toctree::
-   :maxdepth: 0
+   :maxdepth: 2
    :caption: Contents:
 
    install
    siberia
    license
    contacts
+
 
 
 
