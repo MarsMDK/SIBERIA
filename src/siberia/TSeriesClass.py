@@ -11,17 +11,24 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import seaborn as sns
 from scipy.stats import ks_2samp
+from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.tsa.stattools import acf, pacf
+from scipy.stats import kstest
+
+
 
 
 #Set number of threads for parallel computation in input
 
 class TSeries:
     """
-    TSeries: Graph-Based Time Series Analysis Class
+    TSeries: Graph-Based Time Series Analysis Class.
+
     The TSeries class provides a comprehensive framework for analyzing time series data using graph-based methods.
     It is designed to process a weighted adjacency matrix (2D numpy array) representing a N x T time series and extract a rich set of statistics,
     including binary signatures, motif statistics, model fitting, signed graph projection, and signed community detection.
-    Key Features:
+
+    Key Features
     -------------
     - Standardizes input time series data (row-wise mean ~0, std ~1).
     - Computes binary time series representations (positive/negative motifs).
@@ -32,11 +39,31 @@ class TSeries:
     - Builds filtered graphs based on statistical significance (with FDR correction).
     - Detects communities using greedy minimization of BIC or frustration objectives.
     - Visualizes graphs, communities, and block matrices.
+
+    Parameters
+    ----------
     data : np.ndarray
         2D numpy array (N x T) representing the time series matrix (N nodes, T time steps).
     n_jobs : int, optional
-        Number of parallel jobs for computations (default: 1).
+        Number of parallel jobs for computations. Default is 1.
+    prewhitened : bool, optional
+        If True, each row is prewhitened by fitting an autoregressive (AR) model and replacing
+        it with the AR residuals before standardization, removing serial correlation.
+        Default is False.
+    pre_max_p : int, optional
+        Maximum AR order considered when selecting the prewhitening order for each series.
+        Default is 30.
+    no_subcorticals : bool, optional
+        If True, drops the first 16 rows of the (standardized) time series matrix before
+        further processing. Default is False.
+    multiple_hypothesis_testing_correction : {None, 'fdr_bh', 'fdr_by'}, optional
+        Multiple-hypothesis-testing correction method used to select the prewhitening AR
+        order for each series. Only used when ``prewhitened=True``. Default is 'fdr_by'.
+    show_bic_values : bool, optional
+        Currently unused placeholder flag. Default is False.
+
     Attributes
+    ----------
     n_jobs : int
         Number of parallel jobs used.
     N : int
@@ -44,7 +71,7 @@ class TSeries:
     T : int
         Number of time steps (columns in data).
     tseries : np.ndarray
-        Standardized time series matrix.
+        Standardized (and optionally prewhitened) time series matrix.
     binary_tseries : np.ndarray
         Binary sign matrix of time series.
     binary_tseries_positive : np.ndarray
@@ -63,6 +90,8 @@ class TSeries:
         Matrix of discordant motif counts.
     binary_signature : np.ndarray
         Matrix of binary signature values.
+    model : str
+        Name of the fitted model ('naive', 'bSRGM', or 'bSCM').
     params : np.ndarray
         Fitted model parameters.
     ll : float
@@ -75,7 +104,6 @@ class TSeries:
         Akaike Information Criterion of the fitted model.
     norm_rel_error : float
         Relative error of the fitted model.
-        Name of the fitted model.
     x0 : np.ndarray
         Initial guess for model parameters.
     tol : float
@@ -106,8 +134,10 @@ class TSeries:
         Filtered adjacency matrix (projection graph).
     communities : np.ndarray
         Community labels for each node.
+
     Methods
-    __init__(self, data=None, n_jobs=1)
+    -------
+    __init__(self, data=None, n_jobs=1, prewhitened=False, pre_max_p=30, no_subcorticals=False, multiple_hypothesis_testing_correction='fdr_by', show_bic_values=False)
         Initialize the TSeries instance and compute marginals.
     compute_signature(self)
         Compute binary signatures and motif statistics.
@@ -115,7 +145,7 @@ class TSeries:
         Fit a specified model ('bSRGM', 'bSCM') to the data.
     predict(self)
         Predict event probabilities for the fitted model.
-    check_distribution_signature(self, n_ensemble=1000, ks_score=True, alpha=0.05)
+    check_distribution_signature(self, n_ensemble=1000, ks_score=True, alpha=0.05, n_jobs_check=1)
         Validate signature distribution using ensemble and analytical methods.
     build_graph(self, fdr_correction_flag=True, alpha=0.05)
         Build filtered graph using statistical significance (with FDR correction).
@@ -126,20 +156,70 @@ class TSeries:
     plot_communities(self, export_path="", show=True)
         Plot reordered adjacency matrix with community blocks.
     plot_block_matrix(self, export_path="", show=True)
+        Plot the coarse-grained block matrix summarizing dominant link signs between communities.
+
+    Notes
+    -----
     - The class is optimized for parallel computation and large time series datasets.
     - All statistical tests and corrections are performed on the upper triangular part of the projection matrices for efficiency.
     - Community detection supports robust initialization strategies for reproducibility.
     - Visualization methods use discrete colormaps for signed graphs.
+
+    Raises
+    ------
+    ValueError
         If input data is missing or incorrectly formatted, or if required computations are not performed.
+    TypeError
         If input types are incorrect or unsupported.
     """
     
     def __init__(
         self,
-        data = None, n_jobs=1
+        data = None, n_jobs=1, prewhitened=False, pre_max_p = 30, no_subcorticals=False, multiple_hypothesis_testing_correction = 'fdr_by',
+          show_bic_values = False
     ):
+        """
+        Initialize a TSeries instance, optionally prewhiten and standardize the input data,
+        and compute the binary time series and marginal motif statistics.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            2D numpy array (N x T) representing the time series matrix (N nodes, T time steps).
+            Must be a float array.
+        n_jobs : int, optional
+            Number of parallel jobs for computations. Default is 1.
+        prewhitened : bool, optional
+            If True, each row is prewhitened by fitting an AR model (order selected via
+            `pre_max_p` and `multiple_hypothesis_testing_correction`) and replacing it with
+            the AR residuals before standardization. Default is False.
+        pre_max_p : int, optional
+            Maximum AR order considered when selecting the prewhitening order for each series.
+            Default is 30.
+        no_subcorticals : bool, optional
+            If True, drops the first 16 rows of the (standardized) time series matrix before
+            further processing. Default is False.
+        multiple_hypothesis_testing_correction : {None, 'fdr_bh', 'fdr_by'}, optional
+            Multiple-hypothesis-testing correction method used to select the prewhitening AR
+            order for each series. Only used when `prewhitened=True`. Default is 'fdr_by'.
+        show_bic_values : bool, optional
+            Currently unused placeholder flag. Default is False.
+
+        Raises
+        ------
+        ValueError
+            If `data` is None, or if `multiple_hypothesis_testing_correction` is not one of
+            None, 'fdr_bh', or 'fdr_by'.
+        TypeError
+            If `data` is not a numpy array, or if it has an integer dtype.
+        """
         #Initialization
         self.n_jobs = n_jobs
+        self.pre_max_p = pre_max_p
+        self.no_subcorticals = no_subcorticals
+        self.multiple_hypothesis_testing_correction = multiple_hypothesis_testing_correction
+        self.p_opt = None
+
         self.params = None
         self.ll = None
         self.jac = None
@@ -176,25 +256,171 @@ class TSeries:
         
         numba.set_num_threads(self.n_jobs)
 
+        
+        def standardize_rows(matrix):
+            """
+            Standardize the input matrix row-wise (mean ~0, std ~1).
+            Parameters:
+            matrix (numpy.ndarray): A 2D array to be standardized.
+            Returns:
+            numpy.ndarray: A standardized version of the input matrix.
+            """
+            row_means = np.mean(matrix, axis=1)
+            row_stds = np.std(matrix, axis=1)
+            if not (np.allclose(row_means, 0, atol=1e-6) and np.allclose(row_stds, 1, atol=1e-6)):
+                standardized_matrix = (matrix - row_means[:, None]) / (row_stds[:, None] + 1e-12)
+            else:
+                standardized_matrix = matrix
+            return standardized_matrix
+        
         #Implemented models
         self.implemented_models = ['naive','bSRGM','bSCM']
         
+        if self.multiple_hypothesis_testing_correction not in [None,'fdr_bh','fdr_by']:
+            raise ValueError('multiple hypothesis correction can be only "None", "fdr_bh" or "fdr_by"')
         # Check if data is standardized on rows (mean ~0, std ~1), if not, standardize
-        row_means = np.mean(data, axis=1)
-        row_stds = np.std(data, axis=1)
-        if not (np.allclose(row_means, 0, atol=1e-6) and np.allclose(row_stds, 1, atol=1e-6)):
-            data = (data - row_means[:, None]) / (row_stds[:, None] + 1e-12)
-        # print("Data standardized on rows.")
 
-        # Inizialization of data and computation of marginals
-        self.N = data.shape[0]
-        self.T = data.shape[1]
+        if prewhitened:
+            
+            def prewhiten_series_uncorrected(w_i, max_p=100, significance=0.05):
+                T = len(w_i)
+                for p in range(1, max_p + 1):
+                    result = AutoReg(w_i, lags=p, old_names=False).fit()
+                    
+                    # Compute periodogram of residuals
+                    freqs = np.fft.rfftfreq(len(result.resid))
+                    periodogram = np.abs(np.fft.rfft(result.resid))**2
+                    
+                    # Cumulative periodogram normalized to [0,1]
+                    cum_periodogram = np.cumsum(periodogram[1:])  # exclude zero frequency
+                    cum_periodogram /= cum_periodogram[-1]
+                    
+                    # Under white noise, cumulative periodogram should follow
+                    # a uniform distribution on [0,1] — test with KS test
+                    n_freqs = len(cum_periodogram)
+                    uniform_cdf = np.linspace(1/n_freqs, 1, n_freqs)
+                    ks_stat, ks_pvalue = kstest(cum_periodogram, 'uniform')
+                    
+                    if ks_pvalue > significance:
+                        return result.resid, p
+                
+                return result.resid, max_p
+            
 
-        #Binary time series
-        self.tseries = data
-        self.binary_tseries = np.sign(data)
+            def prewhiten_series_corrected(w_i, max_p=100, alpha=0.05, method = 'fdr_bh'):
 
+                raw_pvalues = []
+                residuals_list = []
+
+                # Compute all p-values first
+                for p in range(1, max_p + 1):
+
+                    result = AutoReg(w_i, lags=p, old_names=False).fit()
+                    resid = result.resid
+
+                    residuals_list.append(resid)
+
+                    # Periodogram
+                    periodogram = np.abs(np.fft.rfft(resid))**2
+
+                    # Exclude zero frequency
+                    cum_periodogram = np.cumsum(periodogram[1:])
+                    cum_periodogram /= cum_periodogram[-1]
+
+                    # KS test against uniformity
+                    ks_stat, ks_pvalue = kstest(cum_periodogram, 'uniform')
+
+                    raw_pvalues.append(ks_pvalue)
+
+                raw_pvalues = np.array(raw_pvalues)
+
+                # BH correction
+                reject, corrected_pvalues, _, _ = multipletests(
+                    raw_pvalues,
+                    alpha=alpha,
+                    method=method
+                )
+                # Select first non-rejected model
+                non_rejected = np.where(~reject)[0]
+
+                if len(non_rejected) > 0:
+                    idx = non_rejected[0]
+                else:
+                    idx = max_p - 1
+
+                selected_p = idx + 1
+
+                return (
+                    residuals_list[idx],
+                    selected_p
+                )
+
+
+
+            def prewhiten_biadjacency(matrix,max_p=100, method='fdr_bh'):
+                """
+                Prewhiten all N series using PACF-based order selection.
+
+                Parameters
+                ----------
+                matrix : np.ndarray of shape (N, T)
+                    Standardised time series matrix.
+
+                Returns
+                -------
+                TS_prew : np.ndarray of shape (N, T_eff)
+                    Prewhitened residuals matrix, trimmed to common length
+                    T_eff = T - max_i(p_opt_i) via trailing trim.
+                p_opts : list of int
+                    Optimal AR order for each series.
+                """
+                N, T = matrix.shape
+                residuals_list = []
+                p_opts = []
+
+                
+                for i in range(N):
+                    if method is None:        
+                        residuals, p_opt = prewhiten_series_uncorrected(matrix[i],max_p=max_p)
+                    
+                    else:
+                        residuals, p_opt = prewhiten_series_corrected(matrix[i],max_p=max_p,method=method)
+                
+                    residuals_list.append(residuals)
+                    p_opts.append(p_opt)
+                    
+                # Trailing trim: retain last T_eff points of each series
+                T_eff = min(len(r) for r in residuals_list)
+                TS_prew = np.array([r[-T_eff:] for r in residuals_list])  # shape (N, T_eff)
+
+                return TS_prew, p_opts
+
+            self.tseries, self.p_opt = prewhiten_biadjacency(data, max_p=self.pre_max_p, method=self.multiple_hypothesis_testing_correction)
+        else:
+            self.tseries = data
+        # self.binary_tseries = self.binary_tseries.astype(float)
+        self.tseries = standardize_rows(self.tseries)
+        self.binary_tseries = np.sign(self.tseries)
         
+        #Binary time series
+        if no_subcorticals:
+            self.tseries = self.tseries[16:,:]
+            self.binary_tseries = np.sign(self.tseries)
+
+        # if show_bic_values:
+        #     plt.figure(figsize=(10, 6))
+        #     plt.plot(range(1, self.pre_max_p + 1), bic_values_list[0], label=f'Series {1}')
+        #     plt.xlabel('AR Order (p)')
+        #     plt.ylabel('BIC')
+        #     plt.title('BIC Values for AR(p) Models')
+        #     plt.legend()
+        #     plt.grid()
+        #     plt.show()
+        
+        # Inizialization of data and computation of marginals
+        self.N = self.binary_tseries.shape[0]
+        self.T = self.binary_tseries.shape[1]
+
         #Marginals for positive weights
         self.binary_tseries_positive = np.where(self.binary_tseries > 0, self.binary_tseries, 0)
         self.binary_tseries_negative = np.abs(np.where(self.binary_tseries < 0, self.binary_tseries, 0))
@@ -218,9 +444,12 @@ class TSeries:
         3. Calculates the binary discordant motifs as the sum of positive-negative and negative-positive motifs.
         4. Computes the binary signature as the difference between binary concordant and discordant motifs.
         Attributes:
-            binary_concordant_motifs (int): Sum of concordant motifs for binary time series data.
-            binary_discordant_motifs (int): Sum of discordant motifs for binary time series data.
-            binary_signature (int): Difference between binary concordant and discordant motifs.
+            binary_concordant_motifs (np.ndarray): N x N matrix of concordant motif counts for binary time series data.
+            binary_discordant_motifs (np.ndarray): N x N matrix of discordant motif counts for binary time series data.
+            binary_signature (np.ndarray): N x N matrix of differences between binary concordant and discordant motifs.
+
+        Returns:
+            np.ndarray: The binary signature matrix (also stored in ``self.binary_signature``).
         """
         
                
@@ -287,12 +516,20 @@ class TSeries:
             Step size used for numerical approximation of the Jacobian. Default is 1e-8.
         output_params_path : str, optional
             Path to save the fitted parameters. If None, the parameters will not be saved.
+        imported_params : array-like, optional
+            Pre-computed parameters to use instead of fitting. If provided, optimization is
+            skipped and these parameters are used directly to compute log-likelihood, Jacobian,
+            and AIC. Default is None.
+        solver_type : {'fixed_point', 'lsq'}, optional
+            Solver used to fit the 'bSCM' model. 'fixed_point' uses an iterative fixed-point
+            algorithm; 'lsq' uses least-squares optimization on the relative error. Ignored for
+            'bSRGM', which always uses least-squares optimization. Default is 'fixed_point'.
         Raises:
         -------
         ValueError
             If the model is not initialized or not implemented.
         TypeError
-            If output_params_path is not a string.
+            If output_params_path is not a string, or if solver_type is not 'fixed_point' or 'lsq'.
         Returns:
         --------
         None
@@ -617,36 +854,44 @@ class TSeries:
             
     def predict(self):
         """
-        Predict the probabilities of events based on the specified model.
-        This method computes the probabilities of the occurrence of events for the implemented models:
+        Predict the probabilities of events based on the fitted model.
+        This method computes the probabilities of the occurrence of positive and negative
+        events for each (i, t) entry, for the implemented models:
         - binary Signed Random Graph Model (bSRGM)
         - binary Signed Configuration Model (bSCM)
-        Returns:
-            tuple: For "bSRGM" and "bSCM", returns the computed probabilities:
-                - (pit_plus, pit_minus)
+
+        Returns
+        -------
+        tuple of np.ndarray, or None
+            For "bSRGM" and "bSCM", returns ``(pit_plus, pit_minus)``, each of shape (N, T),
+            also stored in ``self.pit_plus`` and ``self.pit_minus``. For "naive", returns
+            None (no probabilities are computed).
         """
 
         
 
         if self.model == "bSRGM":
             
-            def bsr_model_proba_events(params, shape):
-                """Compute the probabilities of the occurrence of the events for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
-                alpha = np.exp(-params[0])
-                gamma = np.exp(-params[1])
+            # def bsr_model_proba_events(params, shape):
+            #     """Compute the probabilities of the occurrence of the events for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
+            #     alpha = np.exp(-params[0])
+            #     gamma = np.exp(-params[1])
 
-                N = shape[0]
-                T = shape[1]
+            #     N = shape[0]
+            #     T = shape[1]
 
-                pit_plus = np.ones((N,T))*alpha/(alpha+gamma)
-                pit_minus = np.ones((N,T))*gamma/(alpha+gamma)
+            #     pit_plus = np.ones((N,T))*alpha/(alpha+gamma)
+            #     pit_minus = np.ones((N,T))*gamma/(alpha+gamma)
 
-                return pit_plus,pit_minus
-            self.pit_plus,self.pit_minus = bsr_model_proba_events(self.params,(self.N,self.T))
+            #     return pit_plus,pit_minus
+            # self.pit_plus,self.pit_minus = bsr_model_proba_events(self.params,(self.N,self.T))
 
+            self.pit_plus = self.binary_tseries_positive.sum()/(self.N*self.T)*np.ones((self.N,self.T))
+            self.pit_minus = self.binary_tseries_negative.sum()/(self.N*self.T)*np.ones((self.N,self.T))
+            
             return self.pit_plus,self.pit_minus
             
-        
+
         elif self.model == "bSCM":
             
             def bscm_model_proba_events(params,shape):
@@ -676,7 +921,7 @@ class TSeries:
         elif self.model == "naive":pass
             
 
-    def check_distribution_signature(self, n_ensemble = 1000, ks_score=True, alpha = 0.05):
+    def check_distribution_signature(self, n_ensemble = 1000, ks_score=True, alpha = 0.05, n_jobs_check = 1):
         """
         Validate the signature of the model using either ensemble or analytical methods.
         Parameters:
@@ -688,318 +933,262 @@ class TSeries:
             signature distributions. Default is True.
         alpha : float, optional
             Significance level used in the KS test when computing the KS score. Default is 0.05.
-    
-            Flag to indicate whether to use analytical methods for validation. Default is True.
+        n_jobs_check : int, optional
+            Number of parallel jobs used to generate ensemble realizations and, for 'bSCM',
+            analytical PoiBin samples. Default is 1.
         Raises:
         -------
         ValueError
             If the predicted probabilities and conditional weights are not computed before validation.
             If the model specified is not valid.
+        Returns:
+        --------
+        float or None
+            The KS score (fraction of node pairs for which the empirical and analytical
+            signature distributions are not significantly different, also stored in
+            ``self.ks_score``) if ``ks_score=True``; otherwise None.
         Notes:
         ------
         This function validates the signature of the model by computing p-values and applying FDR correction.
-        Depending on the model type and the analytical flag, it uses different methods for validation:
-        - For ensemble-based validation, it computes ensemble signatures and elaborates statistics.
-        - For analytical validation, it computes p-values using specific analytical models for different types of models.
+        Depending on the model type, it uses different methods for validation:
+        - For ensemble-based validation, it generates explicit Monte Carlo realizations and computes their signatures.
+        - For analytical validation, it samples from the closed-form null distribution (binomial for 'bSRGM', Poisson-Binomial for 'bSCM').
         """
     
         if self.pit_plus is None:
             raise ValueError("Predict probabilities and conditional weights first!")
         
         self.n_ensemble = n_ensemble
+        self.n_jobs_check = n_jobs_check
 
-        @jit(nopython=True) 
-        def pairwise_motif(data1, data2):
-            """
-            Compute the cofluctuation dynamic matrix for two time series datasets.
-            This function calculates the cofluctuation dynamic matrix, which is an NxN matrix for each time interval. 
-            The matrix element C_ij is defined as:
-            - 1 if series 'i' and series 'j' fluctuate with the same sign,
-            - -1 if they fluctuate with opposite signs,
-            - 0 otherwise.
-            Parameters:
-            data1 (numpy.ndarray): A 2D array of shape (N, T) representing the first time series dataset.
-            data2 (numpy.ndarray): A 2D array of shape (N, T) representing the second time series dataset.
-            Returns:
-            numpy.ndarray: An NxN matrix representing the cofluctuation dynamic matrix.
-            """
-            # Use matrix multiplication for efficient computation
-            motif = np.dot(data1, data2.T)
-            return motif
+        ###explicit random sampling
+        def signature_single_realization(p_plus, N, T):
+            # Genera la matrice random ed esegue la tua mappatura +1 / -1
+            mat_random = np.random.rand(N, T)
+            mat_realiz = np.where(mat_random < p_plus, 1, -1)
+            
+            # Il prodotto matriciale (N x T) @ (T x N) calcola istantaneamente 
+            # la correlazione (dot product) per tutte le coppie i, j
+            full_matrix = mat_realiz @ mat_realiz.T
+            
+            # Estraiamo solo gli elementi sopra la diagonale principale (coppie uniche)
+            # k=1 esclude la diagonale (evita di confrontare una serie con se stessa)
+            row_idx, col_idx = np.triu_indices(N, k=1)
+            return full_matrix[row_idx, col_idx]
         
-        @jit(nopython=True)
-        def sample_single_realization_binary(pit_plus):
-            """
-            Generates a single realization of binary data based on the given probabilities.
-            Parameters:
-            pit_plus (numpy.ndarray): A 2D array of shape (N, T) containing the probabilities of the positive outcome (1) for each element.
-            pit_minus (numpy.ndarray): A 2D array of shape (N, T) containing the probabilities of the negative outcome (-1) for each element.
-            Returns:
-            numpy.ndarray: A 2D array of shape (N, T) containing the generated binary data, where each element is either 1 or -1 based on the given probabilities.
-            """
 
-            N = pit_plus.shape[0]
-            T = pit_plus.shape[1]
 
-            realization_data = np.zeros((N,T))
+        def signature_ensemble(p_plus, N, T, n_ensemble, n_jobs):
+            # Parallel esegue la funzione single_realization per 'n_ensemble' volte
+            # dividendo il carico sui core specificati da 'n_jobs'
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(signature_single_realization)(p_plus, N, T) 
+                for _ in range(n_ensemble)
+            )
             
-            for i in range(N):
-                for t in range(T):
-                    p_plus = pit_plus[i,t]
-                    
-                    ran = np.random.rand()
-                    if ran < p_plus:
-                        realization_data[i,t] = 1
-                    else:
-                        realization_data[i,t] = -1
-            return realization_data
+            # Trasformiamo la lista di array in una matrice (n_ensemble, true_elements)
+            return np.array(results)
 
-        @jit(nopython=True,parallel=True)
-        def ensemble_signature_computation_binary(pit_plus,n_ensemble):
-            """Compute the ensemble statistics for the co-fluctuation matrices and correlation matrices."""
 
-            N = pit_plus.shape[0]
-            
-            ensemble_signature = np.empty((n_ensemble,N,N))
 
-            
-            for n_ens in prange(n_ensemble):
-                realization_data = sample_single_realization_binary(pit_plus)
-                positive_realization = np.where(realization_data > 0, realization_data, 0)
-                negative_realization = np.abs(np.where(realization_data < 0, realization_data, 0))
-                motif_plus_plus = pairwise_motif(positive_realization,positive_realization)
-                motif_plus_minus = pairwise_motif(positive_realization,negative_realization)
-                motif_minus_plus = pairwise_motif(negative_realization,positive_realization)
-                motif_minus_minus = pairwise_motif(negative_realization,negative_realization)
-                ensemble_signature[n_ens,:,:] = motif_plus_plus + motif_minus_minus - motif_plus_minus - motif_minus_plus
-                
-                
-            return ensemble_signature        
                                 
         if self.model == 'bSRGM':
-                   
-            @jit(nopython=True,parallel=True)
-            def sample_analytical_bsr_model(pit_plus,pit_minus,n_ensemble):
-                """Compute the p-values for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
-                N = pit_plus.shape[0]
-                T = pit_plus.shape[1]
 
-                q_plus = (pit_plus**2 + pit_minus**2)[0]
-                
-                signature_ens = np.empty((N,N,n_ensemble))
-                for i in prange(N):
-                    for j in range(N):
-                        if j != i:
-                            c_ens = np.random.binomial(T,q_plus[0],n_ensemble)
-                            signature_ens[i,j,:] = 2*c_ens - T
-                            
-                return signature_ens
             
-                   
-            def compute_c_ens(i, j, T, ensemble_signature, q_plus):
-                """Helper function to compute c_ens for a specific (i, j)."""
-                ensemble_cij = (T + ensemble_signature[i, j, :]) / 2
-                return binom.pmf(ensemble_cij.astype(int), T, q_plus[0])
+            # ── FUNZIONE ENSEMBLE BINOMIALE DIRETTA ─────────────────────────────────────
+            def signature_ensemble_binomial(q_plus, T, true_elements, n_ensemble, n_jobs):
+                """
+                Genera l'ensemble delle signature campionando direttamente dalla distribuzione 
+                Binomiale teorica associata al modello bSRGM, parallelizzando le realizzazioni.
+                """
+                def single_binomial_realization(q_plus, T, size):
+                    # Campioniamo il numero di accoppiamenti concordi (k) su T tentativi
+                    concordi = np.random.binomial(n=T, p=q_plus, size=int(size))
+                    # I discordi saranno il resto dei tentativi
+                    discordi = T - concordi
+                    # La signature è: concordi - discordi
+                    return concordi - discordi
 
-                   
-            def sample_analytical_bsr_model_2(pit_plus, pit_minus, ensemble_signature, n_jobs):
-                """Compute the p-values for the Binary Bipartite-Signed Random Graph Model (for Time Series)"""
-                N = pit_plus.shape[0]
-                T = pit_plus.shape[1]
-
-                q_plus = (pit_plus**2 + pit_minus**2)[0]
-                signature_ens = ensemble_signature.copy()
-
-                # Parallel computation for (i, j) pairs where i != j
+                # Parallelizziamo la generazione delle realizzazioni dell'intero grafo
                 results = Parallel(n_jobs=n_jobs)(
-                    delayed(compute_c_ens)(i, j, T, ensemble_signature, q_plus)
-                    for i in range(N) for j in range(N) if i != j
+                    delayed(single_binomial_realization)(q_plus, T, true_elements) 
+                    for _ in range(n_ensemble)
                 )
+                
+                return np.array(results)
+            
+            def analytical_pmf_bsrgm(pit_plus, pit_minus, T):
+                """
+                Analytical PMF of the signature S_ij under the bSRGM (eq. bino in paper).
 
-                # Update signature_ens with the computed results
-                index = 0
-                for i in range(N):
-                    for j in range(N):
-                        if i != j:
-                            signature_ens[i, j, :] = results[index]
-                            index += 1
+                Under the bSRGM all (i,t) are i.i.d., so the number of concordant motifs
+                k_ij ~ Binomial(T, q) with q = (p+)^2 + (p-)^2, a single global parameter.
+                The signature S_ij = 2*k_ij - T, so k = 0,...,T maps to s = -T,...,T (step 2).
 
-                return signature_ens
-            
-            ensemble_signature = ensemble_signature_computation_binary(self.pit_plus,self.n_ensemble).transpose(1,2,0)
-            analytical_signature = sample_analytical_bsr_model(self.pit_plus,self.pit_minus,self.n_ensemble)
-            analytical_signature_dist = sample_analytical_bsr_model_2(self.pit_plus,self.pit_minus,ensemble_signature, self.n_jobs)
-            
-            
+                Parameters
+                ----------
+                pit_plus  : np.ndarray, shape (N, T)  [or (1,1) scalar-like]
+                pit_minus : np.ndarray, shape (N, T)
+                T         : int
+
+                Returns
+                -------
+                pmf : np.ndarray, shape (T+1,)
+                    pmf[k] = P(k concordant motifs) = P(S_ij = 2k - T), same for every pair.
+                k_values : np.ndarray, shape (T+1,)   integers 0..T
+                s_values : np.ndarray, shape (T+1,)   integers -T..T step 2
+                """
+    
+                q    = float((pit_plus**2 + pit_minus**2).mean())   # scalar under bSRGM
+                k_values = np.arange(T + 1)
+                pmf      = binom.pmf(k_values, T, q)                # shape (T+1,)
+                s_values = 2 * k_values - T
+                return pmf, k_values, s_values
+
+
+            ensemble_signature = signature_ensemble(
+                p_plus=self.pit_plus[0,0], 
+                N=self.N, 
+                T=self.T, 
+                n_ensemble=self.n_ensemble, 
+                n_jobs=self.n_jobs_check  # Riutilizza la tua variabile globale N_JOBS
+            )
+            true_elements = int((self.N*(self.N-1))/2)
+            q_plus = self.pit_plus[0,0]**2 + self.pit_minus[0,0]**2
+            analytical_signature = signature_ensemble_binomial(q_plus,self.T,true_elements,self.n_ensemble,self.n_jobs_check)
+            analytical_signature_dist = analytical_pmf_bsrgm(self.pit_plus,self.pit_minus,self.T)
+
         elif self.model == 'bSCM':
 
-            
-            
-            def compute_pair_signature(i, j, pit_plus, pit_minus, n_ensemble, T):
+            def _process_pair_poibin(pair_idx, i, j, pit_plus, pit_minus, n_ensemble, T):
                 """
-                Compute the ensemble signature for a single node pair (i, j).
-
-                Parameters:
-                    i (int): Row index.
-                    j (int): Column index.
-                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
-                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
-                    n_ensemble (int): Number of ensemble samples to generate.
-                    T (int): Number of trials (time steps).
-
-                Returns:
-                    tuple: (i, j, ensemble_signature), where ensemble_signature is an array of size n_ensemble.
+                For pair (i,j): build the PoiBin CDF and draw n_ensemble samples.
+                Returns (pair_idx, samples) where samples has shape (n_ensemble,).
                 """
-                if i == j:
-                    # Self-loop case: Set signature to T
-                    return i, j, np.full(n_ensemble, T)
-
-                # Calculate Poisson Binomial probabilities
-                probabilities = pit_plus[i, :] * pit_plus[j, :] + pit_minus[i, :] * pit_minus[j, :]
-
-                # Initialize the Poisson Binomial distribution
-                pb = PoiBin(probabilities)
-
-                # Precompute the CDF for all possible outcomes
-                cdf_values = pb.cdf
-
-                # Generate uniform random numbers
-                uniform_samples = np.random.uniform(0, 1, n_ensemble)
-
-                # Map uniform samples to Poisson Binomial outcomes
-                poibin_samples = np.searchsorted(cdf_values, uniform_samples)
-
-                # Compute ensemble signature
-                ensemble_signature = 2 * poibin_samples - T
-
-                return i, j, ensemble_signature
+                q   = pit_plus[i, :] * pit_plus[j, :] + pit_minus[i, :] * pit_minus[j, :]
+                cdf = PoiBin(q).cdf                             # length T+1
+                u   = np.random.uniform(0, 1, size=n_ensemble)
+                k   = np.searchsorted(cdf, u)                   # concordant motif counts
+                return pair_idx, (2 * k - T).astype(np.int32)   # map to S_ij in [-T, T]
 
 
-            
-            def sample_analytical_bscm_model_poibin(pit_plus, pit_minus, n_ensemble, n_jobs=-1):
+            def signature_ensemble_poibin_analytical(pit_plus, pit_minus, N, T,
+                                                    n_ensemble, n_jobs):
                 """
-                Compute ensemble signatures for the Binary Bipartite-Signed Random Graph Model with parallelization.
+                Analytical bSCM ensemble via PoiBin inverse-CDF sampling.
+                Returns shape (n_ensemble, n_true_elements).
 
-                Parameters:
-                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
-                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
-                    n_ensemble (int): Number of ensemble samples to generate.
-                    n_jobs (int): Number of parallel jobs (-1 to use all available cores).
-
-                Returns:
-                    numpy.ndarray: N x N x n_ensemble array of ensemble signatures.
+                For each pair (i,j), q_{ijt} = p+_it * p+_jt + p-_it * p-_jt
+                and k_ij ~ PoiBin({q_{ijt}}), S_ij = 2*k_ij - T.
                 """
-                N, T = pit_plus.shape
-                ensemble_signature = np.empty((N, N, n_ensemble))
+                rows, cols = np.triu_indices(N, k=1)
+                n_pairs    = len(rows)
 
-                # Outer loop over i with progress tracking
-                for i in range(N):
-                    # Parallel processing of inner loop over j
-                    results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_pair_signature)(i, j, pit_plus, pit_minus, n_ensemble, T)
-                        for j in range(N)
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(_process_pair_poibin)(
+                        pair_idx, rows[pair_idx], cols[pair_idx],
+                        pit_plus, pit_minus, n_ensemble, T
                     )
-                    for _, j, signature in results:
-                        ensemble_signature[i, j, :] = signature
+                    for pair_idx in range(n_pairs)
+                )
 
-                return ensemble_signature
-            
-            
-            def compute_pair_iteration(i, j, pit_plus, pit_minus, T):
+                ensemble = np.empty((n_ensemble, n_pairs), dtype=np.int32)
+                for pair_idx, samples in results:
+                    ensemble[:, pair_idx] = samples
+
+                return ensemble     # (n_ensemble, n_true_elements)
+
+            def analytical_pmf_bscm(pit_plus, pit_minus, N, T, n_jobs=-1):
                 """
-                Compute the ensemble PMF for a single node pair (i, j).
+                Analytical PMF of the signature S_ij under the bSCM (eq. poibino in paper).
 
-                Parameters:
-                    i (int): Row index.
-                    j (int): Column index.
-                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
-                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
-                    T (int): Number of trials (time steps).
+                Under the bSCM the concordant-motif indicator for pair (i,j) at time t is
+                Bernoulli with success probability q_{ijt} = p+_{it}*p+_{jt} + p-_{it}*p-_{jt}.
+                Hence k_ij ~ PoiBin({q_{ijt}}_{t=1}^T) and S_ij = 2*k_ij - T.
 
-                Returns:
-                    tuple: (i, j, pmf_values), where pmf_values is the PMF array.
+                Parameters
+                ----------
+                pit_plus  : np.ndarray, shape (N, T)
+                pit_minus : np.ndarray, shape (N, T)
+                N         : int
+                T         : int
+                n_jobs    : int   (joblib parallelism)
+
+                Returns
+                -------
+                pmf_flat  : np.ndarray, shape (n_pairs, T+1)
+                    pmf_flat[pair_idx, k] = P(k_ij = k) = P(S_ij = 2k - T)
+                    where pair_idx follows the upper-triangle ordering of np.triu_indices(N, k=1).
+                k_values  : np.ndarray, shape (T+1,)
+                s_values  : np.ndarray, shape (T+1,)
                 """
-                if i == j:
-                    # Self-loop case: Set PMF to T
-                    return i, j, np.full(T + 1, T)
+    
+                rows, cols = np.triu_indices(N, k=1)
+                n_pairs    = len(rows)
+                k_values   = np.arange(T + 1)
+                s_values   = 2 * k_values - T
 
-                # Calculate Poisson Binomial probabilities
-                probabilities = pit_plus[i, :] * pit_plus[j, :] + pit_minus[i, :] * pit_minus[j, :]
+                def _pair_pmf(pair_idx):
+                    i, j = rows[pair_idx], cols[pair_idx]
+                    q_ijt = pit_plus[i, :] * pit_plus[j, :] + pit_minus[i, :] * pit_minus[j, :]
+                    pb    = PoiBin(q_ijt)
+                    # PoiBin.pmf is not exposed directly; derive from CDF differences
+                    cdf   = pb.cdf                          # shape (T+2,): CDF[k] = P(K <= k)
+                    pmf   = np.diff(cdf, prepend=0.0)       # pmf[k] = P(K = k), shape (T+1,)
+                    return pair_idx, pmf
 
-                # Initialize the Poisson Binomial distribution
-                pb = PoiBin(probabilities)
+                results  = Parallel(n_jobs=n_jobs)(
+                    delayed(_pair_pmf)(pair_idx) for pair_idx in range(n_pairs)
+                )
 
-                # Compute the PMF
-                pmf_values = pb.pmf
+                pmf_flat = np.empty((n_pairs, T + 1), dtype=float)
+                for pair_idx, pmf in results:
+                    pmf_flat[pair_idx] = pmf
 
-                return i, j, pmf_values
+                return pmf_flat, k_values, s_values
+    
+            # --- explicit ensemble (simulate the bSCM directly) ---
+            ensemble_signature = signature_ensemble(
+                p_plus=self.pit_plus, N=self.N, T=self.T,
+                n_ensemble=self.n_ensemble, n_jobs=self.n_jobs_check
+            )   # (N_ENSEMBLE, n_true_elements)
+
+            # --- analytical ensemble (PoiBin inverse-CDF per pair) ---
+            analytical_signature = signature_ensemble_poibin_analytical(
+                pit_plus=self.pit_plus, pit_minus=self.pit_minus,
+                N=self.N, T=self.T,
+                n_ensemble=self.n_ensemble, n_jobs=self.n_jobs_check
+            )   # (N_ENSEMBLE, n_true_elements)
+
+            analytical_signature_dist = analytical_pmf_bscm(self.pit_plus,self.pit_minus,self.N,self.T,self.n_jobs_check)
+            
 
 
             
-            def sample_analytical_bscm_model_poibin_dist(pit_plus, pit_minus, n_jobs=-1):
-                """
-                Compute ensemble PMFs for the Binary Bipartite-Signed Random Graph Model with parallelization.
-
-                Parameters:
-                    pit_plus (numpy.ndarray): N x T matrix of probabilities for positive interactions.
-                    pit_minus (numpy.ndarray): N x T matrix of probabilities for negative interactions.
-                    ensemble_signature (numpy.ndarray): Precomputed ensemble signature array.
-                    n_jobs (int): Number of parallel jobs (-1 to use all available cores).
-
-                Returns:
-                    numpy.ndarray: N x N x (T+1) array of PMFs.
-                """
-                N, T = pit_plus.shape
-                dist_signature = np.empty((N, N, T + 1), dtype=float)
-
-                # Outer loop over i with progress tracking
-                for i in range(N):
-                    results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_pair_iteration)(i, j, pit_plus, pit_minus, T)
-                        for j in range(N)
-                    )
-                    for _, j, pmf_values in results:
-                        dist_signature[i, j, :] = pmf_values
-
-                return dist_signature
-
-
-
-            
-            ensemble_signature = ensemble_signature_computation_binary(self.pit_plus,self.n_ensemble).transpose(1,2,0)
-            analytical_signature = np.array(sample_analytical_bscm_model_poibin(self.pit_plus,self.pit_minus,self.n_ensemble))
-            analytical_signature_dist = np.array(sample_analytical_bscm_model_poibin_dist(self.pit_plus,self.pit_minus,self.n_jobs))
-        
         self.ensemble_signature = ensemble_signature
         self.analytical_signature = analytical_signature
         self.analytical_signature_dist = analytical_signature_dist
-
+        
         if ks_score==True:
             ### Statistical KS_scores
             
-            def compute_ks_score(ensemble_signature, analytical_signature, alpha):
+            def compute_ks_score(ensemble_explicit, ensemble_analytical, alpha=0.05):
                 """
-                Compute the Kolmogorov-Smirnov (KS) scores between ensemble and analytical signatures.
-                Parameters:
-                    ensemble_signature (numpy.ndarray): N x N x n_ensemble array of ensemble signatures.
-                    analytical_signature (numpy.ndarray): N x N x n_analytical array of analytical signatures.
-                    alpha (float): threshold for kS test
-                Returns:
-                    Returns (float): fraction of node pairs (i, j) for which the KS test p-value ≥ alpha
+                KS score: fraction of pairs (columns) for which the KS test
+                does NOT reject compatibility between explicit and analytical
+                column distributions.
                 """
-                N = ensemble_signature.shape[0]
-                ks_score = 0
-                num_tot = 0
-                for i in range(N):
-                    for j in range(i,N):
-                        if i != j:
-                            num_tot += 1
-                            _, p_KS = ks_2samp(ensemble_signature[i, j, :], analytical_signature[i, j, :], alternative='two-sided', mode='auto')
-                            if p_KS >= alpha:
-                                ks_score += 1
-                
-                ks_score_normalized = ks_score / num_tot
-                return ks_score_normalized
+                n_pairs        = ensemble_explicit.shape[1]
+                n_not_rejected = 0
+                for pair_idx in range(n_pairs):
+                    _, p_val = ks_2samp(
+                        ensemble_explicit[:, pair_idx],
+                        ensemble_analytical[:, pair_idx]
+                    )
+                    if p_val > alpha:
+                        n_not_rejected += 1
+                return n_not_rejected / n_pairs
+
 
             self.ks_score = compute_ks_score(self.ensemble_signature, self.analytical_signature, alpha)
 
@@ -1007,35 +1196,40 @@ class TSeries:
 
     def build_graph(self, fdr_correction_flag = True, alpha = 0.05):
         """
-        This function validates the signature of the model by computing p-values and applying 
-        False Discovery Rate (FDR) correction. Depending on the model type, it uses analytical 
-        methods for validation. The function supports two model types: 'bSRGM' and 'bSCM'.
+        Build a filtered signed adjacency matrix by computing analytical p-values for the
+        empirical signature under the fitted null model, and optionally applying False
+        Discovery Rate (FDR) correction.
 
-        A filtered signature matrix where elements are retained based on the significance level.
-        - For the 'bSRGM' model, p-values are computed using a binomial cumulative distribution function.
-        - For the 'bSCM' model, p-values are computed using the Poisson Binomial distribution.
-        - The FDR correction is applied to the upper triangular part of the p-values matrix, and the 
-          corrected matrix is made symmetric.
-        - The filtered signature matrix is computed by retaining elements of the empirical signature 
-          matrix where the corrected p-values are below the significance level.
-        
-        Validate the signature of the model using analytical methods.
-        Parameters:
-        -----------
+        For ``model='naive'``, the graph is simply the sign of the empirical binary signature.
+        For ``model='bSRGM'`` and ``model='bSCM'``, p-values for the concordant motifs are
+        computed analytically (binomial CDF for 'bSRGM', Poisson-Binomial CDF for 'bSCM').
+
+        Parameters
+        ----------
         fdr_correction_flag : bool, optional
             Flag to indicate whether to apply False Discovery Rate (FDR) correction. Default is True.
         alpha : float, optional
             Significance level for statistical tests. Default is 0.05.
-        Raises:
+
+        Returns
         -------
-        ValueError
-            If the predicted probabilities and conditional weights are not computed before validation.
-            If the model specified is not valid.
-        Notes:
+        numpy.ndarray
+            The filtered signed adjacency matrix (also stored in ``self.graph``), where entries
+            are retained (with sign indicating concordant excess or deficit) only for node pairs
+            whose corrected p-value is below ``alpha``, and 0 otherwise.
+
+        Raises
         ------
-        This function validates the signature of the model by computing p-values and applying FDR correction.
-        Depending on the model type, it uses analytical methods for validation:
-        - It computes p-values using specific analytical models for different types of models.
+        ValueError
+            If the predicted probabilities are not computed before validation (for 'bSRGM'/'bSCM'),
+            or if the model specified is not valid.
+
+        Notes
+        -----
+        - The FDR correction is applied to the upper triangular part of the p-values matrix, and the
+          corrected matrix is made symmetric.
+        - The filtered signature matrix is computed by retaining elements of the empirical signature
+          matrix where the corrected p-values are below the significance level.
         """
         if self.model == 'naive':
             self.graph = np.sign(self.binary_signature)
@@ -1184,7 +1378,7 @@ class TSeries:
 
     def plot_graph(self, export_path='', show=True):
         """
-        Plots the naive and filtered adjacency matrices as heatmaps.
+        Plots the filtered signed adjacency matrix (``self.graph``) as a heatmap.
         Parameters:
         -----------
         export_path : str, optional
@@ -1195,14 +1389,12 @@ class TSeries:
         Raises:
         -------
         ValueError
-            If `self.filtered_graph` is None, indicating that the graph has not been built.
+            If `self.graph` is None, indicating that the graph has not been built.
         Notes:
         ------
-        - The naive adjacency matrix is plotted on the left, and the filtered adjacency 
-          matrix is plotted on the right.
-        - The heatmaps use a discrete colormap with three colors: red (-1), white (0), 
+        - The heatmap uses a discrete colormap with three colors: red (-1), white (0),
           and blue (1).
-        - If `export_path` is provided, the plot is saved as a PDF with the suffix 
+        - If `export_path` is provided, the plot is saved as a PDF with the suffix
           "_adjacency.pdf".
         """
         
@@ -1596,12 +1788,16 @@ class TSeries:
 
         Parameters:
         -----------
-        graph_type : str, optional
-            Either "naive" or "filtered" (default="filtered").
         export_path : str, optional
             Path to save the PDF figure. If empty, the plot is not saved.
         show : bool, optional
             If True, display the figure.
+
+        Raises:
+        -------
+        ValueError
+            If `self.graph` or `self.communities` is None, indicating that `build_graph()`
+            and/or `community_detection()` have not been run yet.
         """
 
         
@@ -1638,7 +1834,8 @@ class TSeries:
 
     def plot_block_matrix(self, export_path="", show=True):
         """
-        Plot block matrix of the graph based on detected communities.
+        Plot a coarse-grained block matrix summarizing the dominant link sign between
+        and within detected communities of ``self.graph``.
 
         Parameters:
         -----------
@@ -1646,6 +1843,19 @@ class TSeries:
             Path to save the PDF figure. If empty, the plot is not saved.
         show : bool, optional
             If True, display the figure.
+
+        Returns:
+        --------
+        np.ndarray
+            A K x K matrix (K = number of communities) with entries in {-1, 0, 1}: 1 if
+            positive links dominate the corresponding intra- or inter-community block,
+            -1 if negative links dominate, 0 if they are equally represented.
+
+        Raises:
+        -------
+        ValueError
+            If `self.graph` or `self.communities` is None, indicating that `build_graph()`
+            and/or `community_detection()` have not been run yet.
         """
 
         if self.graph is None or self.communities is None:
