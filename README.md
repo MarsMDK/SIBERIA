@@ -1,5 +1,5 @@
 ![PyPI](https://img.shields.io/badge/pypi-v0.1.0-blue) [![License:GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) ![Python Version](https://img.shields.io/badge/Python-3.10.12-blue)
-[![Paper](https://img.shields.io/badge/arXiv-2508.00542-b31b1b.svg)](https://arxiv.org/abs/2508.00542)
+[![Paper](https://img.shields.io/badge/DOI-10.1103%2Fp6qp--2s9f-blue.svg)](https://link.aps.org/doi/10.1103/p6qp-2s9f)
 
 
 # SIBERIA: SIgned BEnchmarks foR tIme series Analysis
@@ -81,14 +81,16 @@ T.plot_block_matrix(export_path="results/block_matrix", show=True)
 If you use **SIBERIA** in your research, please cite the following paper:
 
 ```bibtex
-@misc{divece2025assessingimbalancesignedbrain,
-      title={Assessing (im)balance in signed brain networks}, 
-      author={Marzio Di Vece and Emanuele Agrimi and Samuele Tatullo and Tommaso Gili and Miguel Ibáñez-Berganza and Tiziano Squartini},
-      year={2025},
-      eprint={2508.00542},
-      archivePrefix={arXiv},
-      primaryClass={physics.soc-ph},
-      url={https://arxiv.org/abs/2508.00542}, 
+@article{p6qp-2s9f,
+  title = {Assessing imbalance in signed brain networks},
+  author = {Vece, Marzio Di and Agrimi, Emanuele and Tatullo, Samuele and Gili, Tommaso and Ibáñez-Berganza, Miguel and Squartini, Tiziano},
+  journal = {Phys. Rev. Res.},
+  pages = {},
+  year = {2026},
+  month = {Jun},
+  publisher = {American Physical Society},
+  doi = {10.1103/p6qp-2s9f},
+  url = {https://link.aps.org/doi/10.1103/p6qp-2s9f}
 }
 ```
 
@@ -169,6 +171,25 @@ T.ai_plus, T.ai_minus   # row-wise positive / negative counts
 T.kt_plus, T.kt_minus   # column-wise positive / negative counts
 T.a_plus,  T.a_minus    # total positive / negative counts
 ```
+
+### Prewhitening
+
+Each row can optionally be **prewhitened** before standardization: an autoregressive (AR) model is fit to each time series, and the row is replaced by its AR residuals. This removes serial (temporal) autocorrelation that could otherwise bias the co-fluctuation signature.
+
+```python
+T = TSeries(
+    data=Tij,
+    n_jobs=4,
+    prewhitened=True,                            # enable AR-based prewhitening
+    pre_max_p=30,                                # max AR order considered per series
+    multiple_hypothesis_testing_correction="fdr_by",  # None, 'fdr_bh', or 'fdr_by'
+    no_subcorticals=False,                       # drop the first 16 rows if True
+)
+```
+
+- `pre_max_p` caps the AR order searched for each series.
+- `multiple_hypothesis_testing_correction` controls how the optimal AR order is selected across the candidate orders (via a KS test on the residual periodogram); set to `None` to skip correction.
+- `no_subcorticals=True` drops the first 16 rows after standardization — useful when the first rows correspond to regions you want excluded (e.g. subcortical ROIs in brain network data) before further analysis.
 
 ### Compute Signatures
 
